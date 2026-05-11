@@ -3,15 +3,27 @@ const { getToken } = require("./auth");
   const { startDashboard } = require("./dashboard");
   const { getSignals } = require("./strategyEngine");
   const { getRecentBars } = require("./candleEngine");
-  const { getPriorDayLevels, saveSignal, getPendingSignals, setSignalStatus, getAlgoStats, getAlgoStatsDetailed, getDailyPnL, cleanupOldData, saveSessionStats } = require("./database");
+  const { getPriorDayLevels, saveSignal, getPendingSignals, setSignalStatus, getAlgoStats, getAlgoStatsDetailed, getDailyPnL, cleanupOldData, saveSessionStats, savePaperOrder, updatePaperOrder, getOpenPaperOrders } = require("./database");
   const { CONTRACT_ID } = require("./config");
   const { getMarketInternals, getEconomicCalendar } = require("./marketInternals");
+  const schwab = require('./schwabConnector');
   
   // Cleanup old data on startup (7 days)
   cleanupOldData(7);
 
   let globalInternals = {};
   let highImpactNews = [];
+
+  // Start Schwab Macro Stream (Real-time)
+  schwab.start((symbol, data) => {
+    if (!globalInternals[symbol]) globalInternals[symbol] = {};
+    // Map Schwab streamer fields to internal structure
+    // Field 3: Last Price, 5: Net Change Percentage, 6: High, 7: Low
+    if (data['3']) globalInternals[symbol].price = data['3'];
+    if (data['5']) globalInternals[symbol].change = data['5'];
+    if (data['6']) globalInternals[symbol].high = data['6'];
+    if (data['7']) globalInternals[symbol].low = data['7'];
+  });
 
   (async () => {
     console.log("🚀 Starting TopstepX Engine…");
@@ -84,6 +96,24 @@ const { getToken } = require("./auth");
         }
       });
 
+      // 1.1 Track Open Paper Orders
+      const openOrders = getOpenPaperOrders(CONTRACT_ID);
+      openOrders.forEach(order => {
+        let status = null;
+        if (order.side === 'BUY') {
+          if (price >= order.take_profit) status = 'WIN';
+          else if (price <= order.stop_loss) status = 'LOSS';
+        } else {
+          if (price <= order.take_profit) status = 'WIN';
+          else if (price >= order.stop_loss) status = 'LOSS';
+        }
+
+        if (status) {
+          updatePaperOrder(order.id, status, price);
+          console.log(`\n📦 Paper Order ${order.id} closed: ${status} @ ${price}`);
+        }
+      });
+
       // 2. Risk Checks (Circuit Breakers)
       const dailyPnL = getDailyPnL(CONTRACT_ID);
       const isCircuitBroken = consecutiveLosses >= MAX_CONSECUTIVE_LOSSES || dailyPnL.pnl <= DAILY_DRAWDOWN_LIMIT;
@@ -96,13 +126,13 @@ const { getToken } = require("./auth");
       const history = getRecentBars(CONTRACT_ID, '1m', 250);
       const result = await getSignals(price, history, indicators, indicators.vwap, globalInternals, indicators, priorDayLevels);
 
-      // Save new signals (if not halted and cooldown passed)
+      // Save new signals and AUTOMATE Paper Trades
       const now = Date.now();
       if (!isCircuitBroken && result.signals.length > 0) {
         result.signals.forEach(s => {
           const lastTime = lastSignalTimePerAlgo[s.type] || 0;
           if (now - lastTime > 300000) { // 5-minute cooldown per specific algo
-            saveSignal({
+            const dbResult = saveSignal({
               symbol: CONTRACT_ID,
               algo_name: s.type,
               side: s.side,
@@ -115,6 +145,20 @@ const { getToken } = require("./auth");
             });
             lastSignalTimePerAlgo[s.type] = now;
             console.log(`\n🚀 ${s.type} ${s.side} Signal Fired @ ${price}`);
+
+            // Automated Paper Execution for High Confluence signals
+            if (s.score >= 75) {
+              savePaperOrder({
+                symbol: CONTRACT_ID,
+                side: s.side,
+                price: price,
+                quantity: 1, // 1 micro contract
+                signal_id: dbResult.lastInsertRowid,
+                stop_loss: s.stop,
+                take_profit: s.target
+              });
+              console.log(`\n💼 AUTO-TRADE: Opened ${s.side} position for ${s.type} (Score: ${s.score})`);
+            }
           }
         });
       }
@@ -147,7 +191,9 @@ const { getToken } = require("./auth");
 
       // Push to dashboard
       io.emit('tick', { 
-        price, size, ts, bars, tickBars, indicators, 
+        type: 'trade',
+        price, size, ts, bars, tickBars, 
+        indicators: { ...indicators, ...result.indicators }, 
         signals: result.signals, 
         confluence: result.confluence,
         structure: result.structure,
@@ -156,7 +202,8 @@ const { getToken } = require("./auth");
         leaderboardDetailed: algoDetailed,
         dailyPnL,
         internals: globalInternals,
-        news: highImpactNews
+        news: highImpactNews,
+        positions: openOrders
       });
     });
   })();

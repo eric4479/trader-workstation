@@ -16,27 +16,65 @@ function runTALibPattern(patternName, o, h, l, c) {
 }
 
 function getMarketStructure(bars) {
-  if (bars.length < 10) return { structure: 'UNCERTAIN', swings: [] };
+  if (bars.length < 20) return { structure: 'UNCERTAIN', swings: [], events: [] };
 
   const swings = [];
+  const events = [];
+  let currentTrend = 'Neutral';
+
+  // 1. Detect Swings
   for (let i = 2; i < bars.length - 2; i++) {
-    if (bars[i].high > bars[i-1].high && bars[i].high > bars[i-2].high && bars[i].high > bars[i+1].high && bars[i].high > bars[i+2].high) {
-      swings.push({ type: 'HH', price: bars[i].high, time: bars[i].timestamp });
+    const isHigh = bars[i].high > bars[i-1].high && bars[i].high > bars[i-2].high && bars[i].high > bars[i+1].high && bars[i].high > bars[i+2].high;
+    const isLow = bars[i].low < bars[i-1].low && bars[i].low < bars[i-2].low && bars[i].low < bars[i+1].low && bars[i].low < bars[i+2].low;
+    
+    if (isHigh) swings.push({ type: 'HH', price: bars[i].high, time: bars[i].timestamp, index: i });
+    if (isLow) swings.push({ type: 'LL', price: bars[i].low, time: bars[i].timestamp, index: i });
+  }
+
+  if (swings.length < 3) return { trend: 'Neutral', swings, events };
+
+  // 2. Identify Structure Events (BOS/CHoCH)
+  let lastHH = -Infinity;
+  let lastLL = Infinity;
+  let lastHL = Infinity;
+  let lastLH = -Infinity;
+
+  for (let i = 0; i < swings.length; i++) {
+    const s = swings[i];
+    if (s.type === 'HH') {
+      if (s.price > lastHH) {
+        if (currentTrend === 'Bullish') events.push({ type: 'BOS', side: 'BULLISH', price: s.price, time: s.time });
+        lastHH = s.price;
+      } else {
+        // Lower High
+        if (currentTrend === 'Bullish') {
+          currentTrend = 'Neutral';
+          events.push({ type: 'CHoCH', side: 'BEARISH', price: s.price, time: s.time });
+        }
+        lastLH = s.price;
+      }
+    } else {
+      if (s.price < lastLL) {
+        if (currentTrend === 'Bearish') events.push({ type: 'BOS', side: 'BEARISH', price: s.price, time: s.time });
+        lastLL = s.price;
+      } else {
+        // Higher Low
+        if (currentTrend === 'Bearish') {
+          currentTrend = 'Neutral';
+          events.push({ type: 'CHoCH', side: 'BULLISH', price: s.price, time: s.time });
+        }
+        lastHL = s.price;
+      }
     }
-    if (bars[i].low < bars[i-1].low && bars[i].low < bars[i-2].low && bars[i].low < bars[i+1].low && bars[i].low < bars[i+2].low) {
-      swings.push({ type: 'LL', price: bars[i].low, time: bars[i].timestamp });
+    
+    // Initial Trend Assignment
+    if (i === 2 && currentTrend === 'Neutral') {
+       if (swings[i].price > swings[i-2].price && swings[i].type === 'HH') currentTrend = 'Bullish';
+       if (swings[i].price < swings[i-2].price && swings[i].type === 'LL') currentTrend = 'Bearish';
     }
   }
 
-  let trend = 'Neutral';
-  if (swings.length >= 2) {
-    const last = swings[swings.length - 1];
-    const prev = swings[swings.length - 2];
-    if (last.type === 'HH' && prev.type === 'HH' && last.price > prev.price) trend = 'Bullish';
-    if (last.type === 'LL' && prev.type === 'LL' && last.price < prev.price) trend = 'Bearish';
-  }
-
-  return { trend, swings: swings.slice(-5) };
+  return { trend: currentTrend, swings: swings.slice(-10), events: events.slice(-5) };
 }
 
 function runIndicators(bars) {
@@ -189,6 +227,36 @@ async function getAlgorithms(currentPrice, ind, orb, vwap, bars, session = {}, p
     }
   }
 
+  // 9. ALGO_DELTA_DIVERGENCE (Exhaustion/Absorption)
+  if (bars.length >= 10) {
+    const recentBars = bars.slice(-10);
+    // Calculate cumulative delta for the window
+    let windowDelta = 0;
+    const deltas = recentBars.map(b => {
+      windowDelta += (b.delta || 0);
+      return windowDelta;
+    });
+
+    const lastIdx = deltas.length - 1;
+    const prevDeltas = deltas.slice(0, -1);
+    const prevHighs = recentBars.slice(0, -1).map(b => b.high);
+    const prevLows = recentBars.slice(0, -1).map(b => b.low);
+
+    const maxPrevHigh = Math.max(...prevHighs);
+    const maxPrevDelta = Math.max(...prevDeltas);
+    const minPrevLow = Math.min(...prevLows);
+    const minPrevDelta = Math.min(...prevDeltas);
+
+    // Bearish Divergence: Price making new high, Delta failing to make new high
+    if (currentPrice > maxPrevHigh && deltas[lastIdx] < maxPrevDelta) {
+      signals.push({ algo: 'ALGO_DELTA_DIVERGENCE', side: 'SELL', reasons: ['Price New High', 'Delta Divergence (Buying Exhaustion)'] });
+    }
+    // Bullish Divergence: Price making new low, Delta failing to make new low
+    else if (currentPrice < minPrevLow && deltas[lastIdx] > minPrevDelta) {
+      signals.push({ algo: 'ALGO_DELTA_DIVERGENCE', side: 'BUY', reasons: ['Price New Low', 'Delta Divergence (Selling Exhaustion)'] });
+    }
+  }
+
   return signals;
 }
 
@@ -215,7 +283,7 @@ async function getSignals(currentPrice, bars, indicators, vwap, internals = null
     
     // Weighting: Session edges and VA re-entry get higher base scores
     let baseScore = 40;
-    if (s.algo === 'ALGO_SESSION_EDGE' || s.algo === 'ALGO_VALUE_AREA_REENTRY') baseScore = 60;
+    if (s.algo === 'ALGO_SESSION_EDGE' || s.algo === 'ALGO_VALUE_AREA_REENTRY' || s.algo === 'ALGO_DELTA_DIVERGENCE') baseScore = 60;
     
     const score = Math.min(100, baseScore + (s.reasons.length * 20));
 

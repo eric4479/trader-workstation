@@ -40,7 +40,7 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # ── 4. Setup Python venv if not already done ────────────────
-if [ ! -d "venv" ]; then
+if [ ! -d "venv" ] || [ ! -f "venv/bin/python3" ]; then
   echo -e "${YELLOW}🐍 Setting up Python virtual environment…${NC}"
   bash setup_venv.sh
 fi
@@ -91,7 +91,7 @@ case "$CHOICE" in
     echo ""
     echo -e "${GREEN}🔍 Running Python market scanner…${NC}"
     echo ""
-    source venv/bin/activate && python3 scanner.py
+    ./venv/bin/python3 scanner.py
     ;;
   5)
     echo ""

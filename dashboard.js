@@ -66,8 +66,34 @@ function startDashboard(onReady) {
   app.use(express.json());
   app.use(express.static(path.join(__dirname)));
 
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/pro.html'));
+  });
+
+  app.get('/v1', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  });
+
   app.get('/v2', (req, res) => {
     res.sendFile(path.join(__dirname, 'v2.html'));
+  });
+
+  app.get('/proto_tabs', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/proto_tabs.html'));
+  });
+
+  app.get('/proto_terminal', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/proto_terminal.html'));
+  });
+
+  app.get('/api/scanner', (req, res) => {
+    const { execSync } = require('child_process');
+    try {
+      const output = execSync('./venv/bin/python3 scanner.py').toString();
+      res.json({ success: true, output });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.get('/api/candles', (req, res) => {

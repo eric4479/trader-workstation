@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Elite Terminal | Bloomberg Prototype</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root { --bg: #000000; --panel: #0d0d0d; --border: #1a1a1a; --accent: #ff9900; --text: #cccccc; --up: #00ff00; --down: #ff0000; --header: #1a1a1a; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace, sans-serif; height: 100vh; display: grid; grid-template-rows: 40px 1fr 30px; overflow: hidden; }
+        
+        /* Top Bar */
+        header { background: var(--header); display: flex; align-items: center; padding: 0 10px; gap: 20px; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+        .ticker-wrap { display: flex; gap: 15px; overflow: hidden; white-space: nowrap; flex: 1; }
+        .ticker-item b { color: var(--accent); }
+
+        /* Main Grid */
+        main { display: grid; grid-template-columns: 250px 1fr 300px; grid-template-rows: 1fr 200px; gap: 2px; background: var(--border); padding: 2px; }
+        .pane { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+        .pane-header { background: var(--panel); padding: 5px 10px; font-size: 0.7rem; font-weight: bold; text-transform: uppercase; border-bottom: 1px solid var(--border); color: #888; display: flex; justify-content: space-between; }
+
+        /* Widget Specifics */
+        .chart-pane { grid-column: 2; grid-row: 1 / span 2; }
+        .internals-pane { grid-column: 1; grid-row: 1; }
+        .news-pane { grid-column: 1; grid-row: 2; }
+        .execution-pane { grid-column: 3; grid-row: 1; }
+        .tape-pane { grid-column: 3; grid-row: 2; }
+
+        .stat-row { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid #111; font-size: 0.8rem; }
+        .val { font-weight: bold; color: #fff; }
+        
+        .news-item { padding: 8px 10px; border-bottom: 1px solid #111; font-size: 0.75rem; }
+        .news-time { color: var(--accent); margin-right: 5px; }
+
+        .trade-row { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 4px 10px; font-size: 0.75rem; border-bottom: 1px solid #111; }
+
+        /* Footer */
+        footer { background: var(--header); display: flex; align-items: center; padding: 0 10px; font-size: 0.7rem; border-top: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <header>
+        <div style="font-weight: 900; color: var(--accent);">ELITE TERMINAL</div>
+        <div class="ticker-wrap">
+            <span class="ticker-item"><b>ES</b> 5420.25 <span style="color:var(--up)">+0.5%</span></span>
+            <span class="ticker-item"><b>NQ</b> 20145.75 <span style="color:var(--down)">-0.2%</span></span>
+            <span class="ticker-item"><b>YM</b> 39420.50 <span style="color:var(--up)">+0.1%</span></span>
+            <span class="ticker-item"><b>GC</b> 2345.10 <span style="color:var(--up)">+1.2%</span></span>
+        </div>
+        <div>MARKET: <span style="color: var(--up)">OPEN</span></div>
+    </header>
+
+    <main>
+        <!-- Market Internals -->
+        <div class="pane internals-pane">
+            <div class="pane-header"><span>Market Internals</span></div>
+            <div class="stat-row"><span>$ADD (NYSE)</span><span class="val" style="color:var(--up)">+1420</span></div>
+            <div class="stat-row"><span>$TICK</span><span class="val" id="tick-val" style="color:var(--down)">-450</span></div>
+            <div class="stat-row"><span>VIX</span><span class="val">14.22</span></div>
+            <div class="stat-row"><span>DXY</span><span class="val">104.50</span></div>
+            <div class="stat-row"><span>TRIN</span><span class="val">0.85</span></div>
+        </div>
+
+        <!-- News -->
+        <div class="pane news-pane">
+            <div class="pane-header"><span>Live News Feed</span></div>
+            <div class="news-item"><span class="news-time">10:05</span>FED'S COOK: POLICY IS WELL POSITIONED</div>
+            <div class="news-item"><span class="news-time">09:45</span>US SERVICES PMI (MAY) ACTUAL: 54.8 (EST 51.3)</div>
+            <div class="news-item"><span class="news-time">09:30</span>MARKET OPEN: NQ STARTS WITH SELL-SIDE IMBALANCE</div>
+        </div>
+
+        <!-- Main Chart -->
+        <div class="pane chart-pane">
+            <div class="pane-header"><span>MNQ FUTURES (15M)</span><span id="chart-price">20145.75</span></div>
+            <div id="terminal-chart" style="flex: 1;"></div>
+        </div>
+
+        <!-- Execution / Order Entry -->
+        <div class="pane execution-pane">
+            <div class="pane-header"><span>Trade Execution</span></div>
+            <div style="padding: 15px; display: grid; gap: 10px;">
+                <div style="display: flex; gap: 5px;">
+                    <input type="number" value="1" style="flex: 1; background: #222; border: 1px solid #444; color: #fff; padding: 5px;">
+                    <select style="background: #222; border: 1px solid #444; color: #fff;">
+                        <option>MNQ</option>
+                        <option>MES</option>
+                    </select>
+                </div>
+                <button style="background: var(--up); border: none; font-weight: bold; padding: 10px; cursor: pointer;">BUY MKT</button>
+                <button style="background: var(--down); border: none; font-weight: bold; padding: 10px; cursor: pointer;">SELL MKT</button>
+            </div>
+            <div class="pane-header"><span>Active Positions</span></div>
+            <div class="stat-row"><span>Long 1 MNQ</span><span class="val" style="color:var(--up)">+$45.50</span></div>
+        </div>
+
+        <!-- Time & Sales / Tape -->
+        <div class="pane tape-pane">
+            <div class="pane-header"><span>Time & Sales</span></div>
+            <div style="font-size: 0.7rem; color: #555; display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 4px 10px;">
+                <span>TIME</span><span>PRICE</span><span>SIZE</span>
+            </div>
+            <div id="tape-content">
+                <div class="trade-row"><span style="color:#555">10:06:01</span><span style="color:var(--up)">20146.00</span><span>4</span></div>
+                <div class="trade-row"><span style="color:#555">10:06:01</span><span style="color:var(--up)">20145.75</span><span>1</span></div>
+                <div class="trade-row"><span style="color:#555">10:05:59</span><span style="color:var(--down)">20145.50</span><span>12</span></div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div style="flex: 1;">CONNECTED: NY4 DATA CENTER | LATENCY: 12ms</div>
+        <div>2026-05-11 10:06:05 EST</div>
+    </footer>
+
+    <script>
+        // Mock Chart
+        const chart = LightweightCharts.createChart(document.getElementById('terminal-chart'), {
+            layout: { background: { color: '#000' }, textColor: '#ccc' },
+            grid: { vertLines: { color: '#111' }, horzLines: { color: '#111' } },
+            timeScale: { borderColor: '#1a1a1a' },
+            rightPriceScale: { borderColor: '#1a1a1a' },
+        });
+        const series = chart.addCandlestickSeries({ upColor: '#00ff00', downColor: '#ff0000', borderVisible: false });
+        
+        let price = 20145.75;
+        let data = [];
+        let time = Math.floor(Date.now() / 1000) - 100 * 60;
+
+        for(let i=0; i<100; i++) {
+            const open = price;
+            const close = open + (Math.random() - 0.5) * 5;
+            data.push({ time: time + i*60, open, high: Math.max(open, close) + 1, low: Math.min(open, close) - 1, close });
+            price = close;
+        }
+        series.setData(data);
+
+        // Simulation
+        setInterval(() => {
+            const change = (Math.random() - 0.5) * 1;
+            price += change;
+            document.getElementById('chart-price').innerText = price.toFixed(2);
+            document.getElementById('chart-price').style.color = change > 0 ? 'var(--up)' : 'var(--down)';
+            
+            const last = data[data.length-1];
+            series.update({ ...last, close: price, high: Math.max(last.high, price), low: Math.min(last.low, price) });
+            
+            // Random TICK changes
+            if(Math.random() > 0.8) {
+                const tick = Math.floor((Math.random() - 0.5) * 2000);
+                document.getElementById('tick-val').innerText = (tick > 0 ? '+' : '') + tick;
+                document.getElementById('tick-val').style.color = tick > 0 ? 'var(--up)' : 'var(--down)';
+            }
+
+            // Tape update
+            if(Math.random() > 0.5) {
+                const row = document.createElement('div');
+                row.className = 'trade-row';
+                row.innerHTML = `<span style="color:#555">${new Date().toLocaleTimeString()}</span><span style="color:${change > 0 ? 'var(--up)' : 'var(--down)'}">${price.toFixed(2)}</span><span>${Math.floor(Math.random()*15)+1}</span>`;
+                const tape = document.getElementById('tape-content');
+                tape.prepend(row);
+                if(tape.children.length > 20) tape.lastChild.remove();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

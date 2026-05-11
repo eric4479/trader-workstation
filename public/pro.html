@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elite Terminal Pro | Hybrid Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg: #000000;
+            --panel: #0d1117;
+            --panel-bright: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --accent-glow: rgba(88, 166, 255, 0.3);
+            --up: #23d18b;
+            --down: #ff4757;
+            --warn: #f1c40f;
+            --header-h: 40px;
+            --nav-h: 45px;
+            --footer-h: 25px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            background: var(--bg); 
+            color: var(--text); 
+            font-family: 'Inter', sans-serif; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden; 
+        }
+
+        /* --- Ticker Header --- */
+        header { 
+            height: var(--header-h);
+            background: #000;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            gap: 20px;
+            font-size: 0.75rem;
+            z-index: 100;
+        }
+        .ticker-wrap { display: flex; gap: 20px; overflow: hidden; white-space: nowrap; flex: 1; }
+        .ticker-item b { color: var(--accent); margin-right: 5px; }
+        .market-status { color: var(--up); font-weight: 800; display: flex; align-items: center; gap: 6px; }
+        .market-status::before { content: ''; width: 8px; height: 8px; background: var(--up); border-radius: 50%; box-shadow: 0 0 5px var(--up); }
+
+        /* --- Navigation Tabs --- */
+        nav { 
+            height: var(--nav-h);
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            padding: 0 15px;
+            gap: 2px;
+        }
+        .tab { 
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            border-bottom: 2px solid transparent;
+            transition: 0.2s;
+        }
+        .tab:hover { color: #fff; background: rgba(255,255,255,0.05); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(88, 166, 255, 0.05); }
+
+        /* --- Main Content Area --- */
+        main { flex: 1; position: relative; overflow: hidden; }
+        .tab-content { 
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
+            display: none; flex-direction: column; 
+        }
+        .tab-content.active { display: flex; }
+
+        /* --- Command Center Grid (Bloomberg Style) --- */
+        .terminal-grid {
+            display: grid;
+            grid-template-columns: 280px 1fr 320px;
+            grid-template-rows: 1fr 220px;
+            gap: 1px;
+            background: var(--border);
+            height: 100%;
+        }
+        .pane { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+        .pane-header { 
+            background: var(--panel); 
+            padding: 6px 12px; 
+            font-size: 0.7rem; 
+            font-weight: 800; 
+            text-transform: uppercase; 
+            color: var(--text-dim); 
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Panes Assignments */
+        .pane-internals { grid-column: 1; grid-row: 1; }
+        .pane-news { grid-column: 1; grid-row: 2; }
+        .pane-chart { grid-column: 2; grid-row: 1 / span 2; position: relative; }
+        .pane-execution { grid-column: 3; grid-row: 1; }
+        .pane-tape { grid-column: 3; grid-row: 2; }
+
+        /* --- Widget Components --- */
+        .stat-row { 
+            display: flex; justify-content: space-between; padding: 10px 12px; 
+            border-bottom: 1px solid #111; font-size: 0.85rem; 
+        }
+        .stat-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #fff; }
+        
+        #main-chart-container { flex: 1; background: #000; }
+        
+        .tape-row { 
+            display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 4px 12px; 
+            font-size: 0.75rem; border-bottom: 1px solid #111; font-family: 'JetBrains Mono';
+        }
+
+        /* --- Analytics & Risk Tabs --- */
+        .scroll-view { flex: 1; overflow-y: auto; padding: 30px; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        
+        /* --- Footer --- */
+        footer { 
+            height: var(--footer-h);
+            background: #000;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            justify-content: space-between;
+        }
+
+        /* --- Utils --- */
+        .up { color: var(--up); }
+        .down { color: var(--down); }
+        .btn { 
+            padding: 10px; border: none; border-radius: 4px; font-weight: 800; 
+            cursor: pointer; text-transform: uppercase; font-size: 0.75rem;
+        }
+        .btn-buy { background: var(--up); color: #000; }
+        .btn-sell { background: var(--down); color: #fff; }
+    </style>
+</head>
+<body>
+    <header>
+        <div style="font-weight: 900; color: var(--accent); font-size: 0.9rem; letter-spacing: 1px;">ELITE TERMINAL PRO</div>
+        <div class="ticker-wrap" id="ticker-tape">
+            <span class="ticker-item"><b>ES</b> <span id="tick-es">5420.25</span> <span class="up">+0.42%</span></span>
+            <span class="ticker-item"><b>NQ</b> <span id="tick-nq">20145.75</span> <span class="down">-0.15%</span></span>
+            <span class="ticker-item"><b>DXY</b> <span id="tick-dxy">104.50</span> <span class="up">+0.05%</span></span>
+            <span class="ticker-item"><b>VIX</b> <span id="tick-vix">14.22</span> <span class="down">-2.40%</span></span>
+        </div>
+        <div class="market-status">NY4 LIVE</div>
+    </header>
+
+    <nav>
+        <div class="tab active" onclick="showTab('command')">COMMAND CENTER</div>
+        <div class="tab" onclick="showTab('analytics')">ALPHA RANKING</div>
+        <div class="tab" onclick="showTab('risk')">RISK CONSOLE</div>
+        <div class="tab" onclick="showTab('scanner')">OPPORTUNITY SCAN</div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 15px;">
+            <select id="tf-select" onchange="changeTF(this.value)" style="background:transparent; color:var(--text); border:1px solid var(--border); padding:4px; font-size:0.75rem;">
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m" selected>15m</option>
+                <option value="1h">1h</option>
+                <option value="100t">100t</option>
+            </select>
+            <div id="connection-indicator" style="font-size: 0.7rem; color: var(--up);">● CONNECTED</div>
+        </div>
+    </nav>
+
+    <main>
+        <!-- Tab: Command Center -->
+        <div id="tab-command" class="tab-content active">
+            <div class="terminal-grid">
+                <!-- Internals Sidebar -->
+                <div class="pane pane-internals">
+                    <div class="pane-header"><span>Market Internals</span></div>
+                    <div class="stat-row"><span>$ADD (NYSE)</span><span class="stat-val up">+1,420</span></div>
+                    <div class="stat-row"><span>$TICK</span><span class="stat-val down" id="internal-tick">-450</span></div>
+                    <div class="stat-row"><span>Cumulative Delta</span><span class="stat-val" id="internal-delta">0</span></div>
+                    <div class="stat-row"><span>VWAP Bias</span><span class="stat-val up" id="internal-vwap">BULLISH</span></div>
+                    
+                    <div class="pane-header" style="margin-top:10px;"><span>Confluence Gauge</span></div>
+                    <div style="padding: 15px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <div id="confluence-score" style="font-size: 2rem; font-weight: 800; color: var(--accent);">0</div>
+                        <div id="confluence-label" style="font-size: 0.6rem; text-transform: uppercase; color: var(--text-dim);">Neutral Conviction</div>
+                        <div style="width: 100%; height: 4px; background: #111; border-radius: 2px; margin-top: 10px; overflow: hidden;">
+                            <div id="confluence-bar" style="width: 0%; height: 100%; background: var(--accent); transition: 0.3s;"></div>
+                        </div>
+                    </div>
+
+                    <div class="pane-header" style="margin-top:10px;"><span>Daily Levels</span></div>
+                    <div class="stat-row"><span>High of Day</span><span class="stat-val up" id="level-hod">—</span></div>
+                    <div class="stat-row"><span>Low of Day</span><span class="stat-val down" id="level-lod">—</span></div>
+                    <div class="stat-row"><span>Value Area High</span><span class="stat-val" id="level-vah">—</span></div>
+                    <div class="stat-row"><span>Value Area Low</span><span class="stat-val" id="level-val">—</span></div>
+
+                    <div class="pane-header" style="margin-top:10px;"><span>Chart Options</span></div>
+                    <div style="padding: 10px; font-size: 0.8rem; display: grid; gap: 8px;">
+                        <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="opt-vwap" checked onchange="toggleInd('vwap')"> VWAP Overlay</label>
+                        <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="opt-ema" onchange="toggleInd('ema')"> EMA Ribbon (9/21)</label>
+                        <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="opt-bb" onchange="toggleInd('bb')"> Bollinger Bands</label>
+                        <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="opt-levels" checked onchange="toggleInd('levels')"> Session Levels</label>
+                    </div>
+                </div>
+
+                <!-- News / Economic Calendar -->
+                <div class="pane pane-news">
+                    <div class="pane-header"><span>Economic News</span></div>
+                    <div id="news-container" style="overflow-y: auto;">
+                        <div style="padding: 10px; font-size: 0.75rem; color: var(--text-dim); text-align: center;">Waiting for news events...</div>
+                    </div>
+                </div>
+
+                <!-- Main Chart -->
+                <div class="pane pane-chart">
+                    <div class="pane-header">
+                        <span id="chart-symbol">MNQ FUTURES (15M)</span>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span id="last-sync" style="font-size:0.6rem; color:var(--text-dim);">LAST SYNC: --:--:--</span>
+                            <span id="chart-price" class="stat-val" style="font-size: 0.9rem;">0.00</span>
+                        </div>
+                    </div>
+                    <div id="main-chart-container"></div>
+                </div>
+
+                <!-- Execution Panel -->
+                <div class="pane pane-execution">
+                    <div class="pane-header"><span>Execution Engine</span></div>
+                    <div style="padding: 15px; display: grid; gap: 10px;">
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="order-qty" value="1" style="flex: 0.5; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; font-family: 'JetBrains Mono';">
+                            <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #000; border: 1px solid var(--border); font-family: 'JetBrains Mono'; font-weight: 700;">MNQ</div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <button class="btn btn-buy" onclick="placeOrder('BUY')">BUY MARKET</button>
+                            <button class="btn btn-sell" onclick="placeOrder('SELL')">SELL MARKET</button>
+                        </div>
+                    </div>
+                    <div class="pane-header"><span>Active Positions</span></div>
+                    <div id="positions-list" style="flex: 1; overflow-y: auto;">
+                        <div style="padding: 15px; font-size: 0.75rem; color: var(--text-dim); text-align: center;">No active positions</div>
+                    </div>
+                </div>
+
+                <!-- Time & Sales (Tape) -->
+                <div class="pane pane-tape">
+                    <div class="pane-header"><span>Time & Sales</span></div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 4px 12px; font-size: 0.65rem; color: var(--text-dim); border-bottom: 1px solid var(--border);">
+                        <span>TIME</span><span>PRICE</span><span>SIZE</span>
+                    </div>
+                    <div id="tape-container" style="flex: 1; overflow-y: hidden;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Alpha Ranking -->
+        <div id="tab-analytics" class="tab-content">
+            <div class="scroll-view">
+                <div class="card">
+                    <h2>Strategy Alpha Ranking</h2>
+                    <p style="color: var(--text-dim); margin-bottom: 20px;">Mathematical performance of every automated signal.</p>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                        <thead style="text-align: left; color: var(--text-dim); border-bottom: 1px solid var(--border);">
+                            <tr>
+                                <th style="padding: 10px;">ALGO</th>
+                                <th>WIN %</th>
+                                <th>EV (PTS)</th>
+                                <th>AVG R/R</th>
+                                <th>TRADES</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Risk Console -->
+        <div id="tab-risk" class="tab-content">
+            <div class="scroll-view">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="card">
+                        <h3>Circuit Breakers</h3>
+                        <div class="stat-row"><span>Daily Max Loss</span><span class="stat-val">$200.00</span></div>
+                        <div class="stat-row"><span>Current Drawdown</span><span class="stat-val" id="risk-drawdown">$0.00</span></div>
+                        <button class="btn btn-sell" style="width: 100%; margin-top: 20px;">HALT ALL SYSTEMS</button>
+                    </div>
+                    <div class="card">
+                        <h3>Account Equity</h3>
+                        <div id="equity-chart" style="height: 150px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Scanner -->
+        <div id="tab-scanner" class="tab-content">
+            <div class="scroll-view">
+                <div id="scanner-results" class="internals-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;">
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 50px; color: var(--text-dim);">
+                        Running Python Market Scanner...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div>SYSTEM STATUS: <span class="up">NOMINAL</span> | LATENCY: <span id="stat-latency">--</span>ms</div>
+        <div id="footer-time">2026-05-11 10:00:00 UTC</div>
+    </footer>
+
+    <script>
+        const socket = io();
+        let currentTF = '15m';
+        let currentPrice = 0;
+        const audio = new Audio('/public/sounds/alert.mp3');
+
+        // --- Tabs ---
+        function showTab(name) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(`tab-${name}`).classList.add('active');
+            event.currentTarget.classList.add('active');
+            if (name === 'scanner') runScanner();
+        }
+
+        // --- Scanner ---
+        async function runScanner() {
+            const container = document.getElementById('scanner-results');
+            container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 50px; color: var(--accent);">🔍 EXECUTING STATISTICAL SCAN...</div>';
+            
+            try {
+                const res = await fetch('/api/scanner');
+                const data = await res.json();
+                if (data.success) {
+                    container.innerHTML = `
+                        <div class="card" style="grid-column: 1 / -1; font-family: 'JetBrains Mono'; white-space: pre-wrap; font-size: 0.85rem;">${data.output}</div>
+                    `;
+                } else {
+                    container.innerHTML = `<div style="grid-column: 1 / -1; color: var(--down);">Error running scanner: ${data.error}</div>`;
+                }
+            } catch (e) {
+                container.innerHTML = `<div style="grid-column: 1 / -1; color: var(--down);">Failed to fetch scanner results.</div>`;
+            }
+        }
+
+        // --- Charts ---
+        const chart = LightweightCharts.createChart(document.getElementById('main-chart-container'), {
+            layout: { background: { color: '#000' }, textColor: '#ccc', fontSize: 11 },
+            grid: { vertLines: { color: '#111' }, horzLines: { color: '#111' } },
+            timeScale: { borderColor: '#30363d', timeVisible: true },
+            rightPriceScale: { borderColor: '#30363d' },
+        });
+        const mainSeries = chart.addCandlestickSeries({ upColor: '#23d18b', downColor: '#ff4757', borderVisible: false });
+        const vwapSeries = chart.addLineSeries({ color: 'rgba(241, 196, 15, 0.6)', lineWidth: 1, lineStyle: 2, title: 'VWAP' });
+        const ema9Series = chart.addLineSeries({ color: '#58a6ff', lineWidth: 1, visible: false, title: 'EMA 9' });
+        const bbUpperSeries = chart.addLineSeries({ color: 'rgba(88, 166, 255, 0.3)', lineWidth: 1, visible: false, title: 'BB Upper' });
+        const bbLowerSeries = chart.addLineSeries({ color: 'rgba(88, 166, 255, 0.3)', lineWidth: 1, visible: false, title: 'BB Lower' });
+
+        // Equity Chart (Risk Tab)
+        const equityChart = LightweightCharts.createChart(document.getElementById('equity-chart'), {
+            layout: { background: { color: 'transparent' }, textColor: '#8b949e', fontSize: 10 },
+            grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+            timeScale: { visible: false },
+            rightPriceScale: { borderVisible: false }
+        });
+        const equitySeries = equityChart.addLineSeries({ color: '#23d18b', lineWidth: 2 });
+        let equityHistory = [{ time: Math.floor(Date.now()/1000), value: 0 }];
+        equitySeries.setData(equityHistory);
+        
+        const priceLines = {};
+        function updatePriceLine(id, price, color, title) {
+            if (!price) return;
+            if (priceLines[id]) mainSeries.removePriceLine(priceLines[id]);
+            priceLines[id] = mainSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
+        }
+
+        function toggleInd(name) {
+            const checked = document.getElementById(`opt-${name}`).checked;
+            if (name === 'vwap') vwapSeries.applyOptions({ visible: checked });
+            if (name === 'ema') ema9Series.applyOptions({ visible: checked });
+            if (name === 'bb') {
+                bbUpperSeries.applyOptions({ visible: checked });
+                bbLowerSeries.applyOptions({ visible: checked });
+            }
+            if (name === 'levels') {
+                Object.values(priceLines).forEach(l => l.applyOptions({ visible: checked }));
+            }
+        }
+
+        async function loadInitialData() {
+            const res = await fetch(`/api/candles?tf=${currentTF}&limit=500`);
+            const data = await res.json();
+            mainSeries.setData(data.map(d => ({
+                time: Math.floor(new Date(d.timestamp).getTime() / 1000),
+                open: d.open, high: d.high, low: d.low, close: d.close
+            })));
+            chart.timeScale().fitContent();
+        }
+
+        // --- Socket Events ---
+        socket.on('tick', (data) => {
+            document.getElementById('last-sync').textContent = `LAST SYNC: ${new Date().toLocaleTimeString()}`;
+            if (data.price) {
+                updatePrice(data.price);
+                updateTape(data.price, data.size, data.ts);
+                updateChart(data);
+                if (data.structure) updateStructure(data.structure);
+            }
+            if (data.indicators) updateIndicators(data.indicators);
+            if (data.dailyPnL) updatePnL(data.dailyPnL);
+            if (data.internals) updateInternals(data.internals);
+            if (data.news) updateNews(data.news);
+            if (data.confluence) updateConfluence(data.confluence);
+            if (data.positions) updatePositions(data.positions);
+        });
+
+        socket.on('analytics', (data) => {
+            if (data.leaderboard) updateLeaderboard(data.leaderboard);
+        });
+
+        // --- UI Updates ---
+        function updateConfluence(conf) {
+            const scoreEl = document.getElementById('confluence-score');
+            const labelEl = document.getElementById('confluence-label');
+            const barEl = document.getElementById('confluence-bar');
+            
+            scoreEl.textContent = Math.round(conf.score);
+            scoreEl.className = conf.score >= 20 ? 'up' : (conf.score <= -20 ? 'down' : '');
+            
+            let label = 'Neutral Conviction';
+            if (conf.score > 40) label = 'Strong Bullish';
+            else if (conf.score > 10) label = 'Bullish Bias';
+            else if (conf.score < -40) label = 'Strong Bearish';
+            else if (conf.score < -10) label = 'Bearish Bias';
+            labelEl.textContent = label;
+            
+            const barWidth = Math.abs(conf.score);
+            barEl.style.width = `${barWidth}%`;
+            barEl.style.background = conf.score >= 0 ? 'var(--up)' : 'var(--down)';
+            barEl.style.marginLeft = conf.score >= 0 ? '50%' : `${50 - barWidth}%`;
+        }
+
+        function updatePositions(positions) {
+            const container = document.getElementById('positions-list');
+            if (positions.length === 0) {
+                container.innerHTML = '<div style="padding: 15px; font-size: 0.75rem; color: var(--text-dim); text-align: center;">No active positions</div>';
+                return;
+            }
+            container.innerHTML = positions.map(p => {
+                const pnl = (p.side === 'BUY' ? (currentPrice - p.price) : (p.price - currentPrice)) * 2;
+                return `
+                    <div style="padding: 12px; border-bottom: 1px solid #111; font-family: 'JetBrains Mono';">
+                        <div style="display:flex; justify-content:space-between; margin-bottom: 5px;">
+                            <span style="font-weight:800; color: ${p.side === 'BUY' ? 'var(--up)' : 'var(--down)'}">${p.side} MNQ</span>
+                            <span class="${pnl >= 0 ? 'up' : 'down'}">$${pnl.toFixed(2)}</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size: 0.65rem; color: var(--text-dim);">
+                            <span>ENTRY: ${p.price.toFixed(2)}</span>
+                            <span>SL: ${p.stop_loss.toFixed(2)} | TP: ${p.take_profit.toFixed(2)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        function updatePrice(price) {
+            const el = document.getElementById('chart-price');
+            const prev = parseFloat(el.getAttribute('data-prev')) || price;
+            el.textContent = price.toFixed(2);
+            el.className = `stat-val ${price >= prev ? 'up' : 'down'}`;
+            el.setAttribute('data-prev', price);
+            
+            // Update Ticker Header
+            const nqEl = document.getElementById('tick-nq');
+            if (nqEl) nqEl.textContent = price.toFixed(2);
+            currentPrice = price;
+        }
+
+        function updateTape(price, size, ts) {
+            const container = document.getElementById('tape-container');
+            const row = document.createElement('div');
+            row.className = 'tape-row';
+            
+            let sizeColor = 'var(--text)';
+            if (size >= 10) sizeColor = 'var(--warn)';
+            if (size >= 50) sizeColor = '#ff00ff';
+            
+            const timeStr = ts ? new Date(ts).toLocaleTimeString([], {hour12: false}) : new Date().toLocaleTimeString();
+            
+            row.innerHTML = `
+                <span style="color:var(--text-dim)">${timeStr}</span>
+                <span class="${price >= currentPrice ? 'up' : 'down'}">${price.toFixed(2)}</span>
+                <span style="color:${sizeColor}; font-weight:800;">${size}</span>
+            `;
+            container.prepend(row);
+            if (container.children.length > 50) container.lastChild.remove();
+        }
+
+        function updateStructure(struct) {
+            const el = document.getElementById('internal-vwap');
+            if (el) {
+                el.textContent = struct.trend.toUpperCase();
+                el.className = `stat-val ${struct.trend === 'Bullish' ? 'up' : (struct.trend === 'Bearish' ? 'down' : '')}`;
+            }
+            if (struct.events && struct.events.length > 0) {
+                const markers = struct.events.map(ev => ({
+                    time: Math.floor(new Date(ev.time).getTime() / 1000),
+                    position: ev.side === 'BULLISH' ? 'belowBar' : 'aboveBar',
+                    color: ev.type === 'BOS' ? '#58a6ff' : '#f1c40f',
+                    shape: 'arrowUp',
+                    text: `${ev.type} ${ev.side === 'BULLISH' ? '↑' : '↓'}`
+                }));
+                const existing = mainSeries.getMarkers() || [];
+                const merged = [...existing, ...markers].reduce((acc, current) => {
+                    if (!acc.find(item => item.time === current.time && item.text === current.text)) acc.push(current);
+                    return acc;
+                }, []).sort((a,b) => a.time - b.time).slice(-50);
+                mainSeries.setMarkers(merged);
+            }
+        }
+
+        function updateIndicators(ind) {
+            document.getElementById('internal-delta').textContent = ind.cumDelta.toLocaleString();
+            document.getElementById('level-hod').textContent = ind.session.high.toFixed(2);
+            document.getElementById('level-lod').textContent = ind.session.low.toFixed(2);
+            if (ind.va.vah) {
+                document.getElementById('level-vah').textContent = ind.va.vah.toFixed(2);
+                document.getElementById('level-val').textContent = ind.va.val.toFixed(2);
+            }
+
+            const ts = Math.floor(Date.now() / 1000);
+            if (ind.ema9) ema9Series.update({ time: ts, value: ind.ema9 });
+            if (ind.bb) {
+                bbUpperSeries.update({ time: ts, value: ind.bb.upper });
+                bbLowerSeries.update({ time: ts, value: ind.bb.lower });
+            }
+            if (ind.vwap) vwapSeries.update({ time: ts, value: ind.vwap });
+
+            if (ind.orb15 && ind.orb15.set) {
+                updatePriceLine('orb15h', ind.orb15.high, '#f1c40f', 'ORB 15m H');
+                updatePriceLine('orb15l', ind.orb15.low, '#f1c40f', 'ORB 15m L');
+            }
+        }
+
+        function updateInternals(internals) {
+            if (internals.VIX) {
+                const vix = internals.VIX;
+                const el = document.getElementById('tick-vix');
+                if (el) {
+                    el.textContent = vix.price.toFixed(2);
+                    const changeEl = el.nextElementSibling;
+                    if (changeEl) {
+                        changeEl.className = vix.change >= 0 ? 'up' : 'down';
+                        changeEl.textContent = `${vix.change >= 0 ? '+' : ''}${vix.change.toFixed(2)}%`;
+                    }
+                }
+            }
+            if (internals.DXY) {
+                const dxy = internals.DXY;
+                const el = document.getElementById('tick-dxy');
+                if (el) el.textContent = dxy.price.toFixed(2);
+            }
+        }
+
+        function updateNews(news) {
+            const container = document.getElementById('news-container');
+            if (!container || !news || news.length === 0) return;
+            container.innerHTML = news.map(n => `
+                <div style="padding: 10px; border-bottom: 1px solid #111; font-size: 0.75rem;">
+                    <div style="color: var(--warn); font-weight: 800;">${n.time} - ${n.event}</div>
+                    <div style="color: var(--text-dim); margin-top: 4px;">Impact: High | ${n.country}</div>
+                </div>
+            `).join('');
+        }
+
+        function updatePnL(data) {
+            const el = document.getElementById('risk-drawdown');
+            if (el) {
+                el.textContent = `$${data.pnl.toFixed(2)}`;
+                el.className = `stat-val ${data.pnl >= 0 ? 'up' : 'down'}`;
+            }
+            const now = Math.floor(Date.now()/1000);
+            if (now > equityHistory[equityHistory.length-1].time) {
+                equityHistory.push({ time: now, value: data.pnl });
+                if (equityHistory.length > 200) equityHistory.shift();
+                equitySeries.setData(equityHistory);
+            }
+        }
+
+        function updateChart(data) {
+            const bar = data.bars[currentTF];
+            if (bar) {
+                mainSeries.update({
+                    time: Math.floor(new Date(bar.timestamp).getTime() / 1000),
+                    open: bar.open, high: bar.high, low: bar.low, close: bar.close
+                });
+            }
+        }
+
+        function updateLeaderboard(list) {
+            const body = document.getElementById('leaderboard-body');
+            body.innerHTML = list.slice(0, 10).map(algo => `
+                <tr style="border-bottom: 1px solid #111;">
+                    <td style="padding: 12px; font-weight:700;">${algo.algo_name.replace('ALGO_','')}</td>
+                    <td class="up">${(algo.win_rate * 100).toFixed(1)}%</td>
+                    <td class="${algo.ev > 0 ? 'up' : 'down'}">${algo.ev.toFixed(2)}</td>
+                    <td>${algo.rr.toFixed(2)}</td>
+                    <td>${algo.total}</td>
+                </tr>
+            `).join('');
+        }
+
+        async function placeOrder(side) {
+            const qty = document.getElementById('order-qty').value;
+            await fetch('/api/paper/order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ side, price: currentPrice, quantity: parseInt(qty) })
+            });
+        }
+
+        function changeTF(tf) {
+            currentTF = tf;
+            loadInitialData();
+        }
+
+        loadInitialData();
+        setInterval(() => {
+            document.getElementById('footer-time').textContent = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+        }, 1000);
+    </script>
+</body>
+</html>

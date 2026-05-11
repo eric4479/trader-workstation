@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Elite Terminal | Tabbed Prototype</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root { --bg: #0b0e14; --panel: #151921; --border: #2d333b; --accent: #58a6ff; --text: #adbac7; --up: #22ab94; --down: #f23645; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        /* Header & Tabs */
+        header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 60px; }
+        .logo { font-weight: 800; color: #fff; letter-spacing: 1px; }
+        nav { display: flex; gap: 2px; height: 100%; }
+        .tab { padding: 0 30px; display: flex; align-items: center; cursor: pointer; border-bottom: 2px solid transparent; transition: 0.2s; font-weight: 600; font-size: 0.9rem; }
+        .tab:hover { background: rgba(255,255,255,0.05); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(88, 166, 255, 0.05); }
+
+        /* Main Area */
+        main { flex: 1; display: flex; overflow: hidden; }
+        .tab-content { flex: 1; display: none; padding: 20px; position: relative; }
+        .tab-content.active { display: flex; }
+
+        /* Chart View */
+        #chart-container { flex: 1; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+        
+        /* Internals View */
+        .internals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; width: 100%; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .card h3 { margin: 0 0 20px 0; font-size: 0.8rem; text-transform: uppercase; color: #768390; }
+        .big-val { font-size: 2.5rem; font-weight: 800; color: #fff; margin-bottom: 5px; }
+
+        /* Sidebar (Always Visible) */
+        aside { width: 300px; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px; }
+        .price-badge { font-size: 2rem; font-weight: 800; text-align: center; margin-bottom: 30px; padding: 20px; background: #000; border-radius: 12px; border: 1px solid var(--border); }
+        .btn { padding: 15px; border-radius: 8px; border: none; font-weight: 800; cursor: pointer; text-transform: uppercase; margin-bottom: 10px; }
+        .btn-buy { background: var(--up); color: #fff; }
+        .btn-sell { background: var(--down); color: #fff; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">ELITE TABS PRO</div>
+        <nav>
+            <div class="tab active" onclick="showTab('chart')">Main Chart</div>
+            <div class="tab" onclick="showTab('internals')">Market Internals</div>
+            <div class="tab" onclick="showTab('execution')">Execution Log</div>
+        </nav>
+        <div style="font-size: 0.8rem; color: var(--accent)">● SIMULATED LIVE FEED</div>
+    </header>
+
+    <main>
+        <div id="view-chart" class="tab-content active">
+            <div id="chart-container"></div>
+        </div>
+
+        <div id="view-internals" class="tab-content">
+            <div class="internals-grid">
+                <div class="card">
+                    <h3>Market Breadth ($ADD)</h3>
+                    <div class="big-val">+1,240</div>
+                    <div style="color: var(--up)">↑ Bullish Momentum</div>
+                </div>
+                <div class="card">
+                    <h3>Volatility (VIX)</h3>
+                    <div class="big-val">14.22</div>
+                    <div style="color: var(--up)">↓ Risk-On Environment</div>
+                </div>
+                <div class="card">
+                    <h3>Tick Index ($TICK)</h3>
+                    <div class="big-val">-420</div>
+                    <div style="color: var(--down)">↓ Short-term Overbought</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-execution" class="tab-content">
+            <div class="card" style="width: 100%">
+                <h3>Recent Orders</h3>
+                <div style="font-family: monospace; font-size: 0.85rem;">
+                    [09:31:02] BUY 1 MNQ @ 20150.50 - FILLED<br>
+                    [09:35:15] SELL 1 MNQ @ 20175.25 - FILLED<br>
+                    <span style="color: var(--up)">[PROFIT: +$49.50]</span>
+                </div>
+            </div>
+        </div>
+
+        <aside>
+            <div id="price" class="price-badge">20145.75</div>
+            <button class="btn btn-buy">Buy Market</button>
+            <button class="btn btn-sell">Sell Market</button>
+            <div style="margin-top: auto; border-top: 1px solid var(--border); padding-top: 20px;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:10px;"><span>Daily P&L</span><span style="color: var(--up); font-weight:800;">+$1,240.00</span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Account</span><span>$48,920.00</span></div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        function showTab(name) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(`view-${name}`).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        // Mock Chart
+        const chart = LightweightCharts.createChart(document.getElementById('chart-container'), {
+            layout: { background: { color: 'transparent' }, textColor: '#adbac7' },
+            grid: { vertLines: { color: '#2d333b' }, horzLines: { color: '#2d333b' } },
+            timeScale: { borderColor: '#2d333b' },
+            rightPriceScale: { borderColor: '#2d333b' },
+        });
+        const series = chart.addCandlestickSeries({ upColor: '#22ab94', downColor: '#f23645' });
+        
+        let data = [];
+        let price = 20145.75;
+        let time = Math.floor(Date.now() / 1000) - 100 * 60;
+
+        for(let i=0; i<100; i++) {
+            const open = price;
+            const close = open + (Math.random() - 0.5) * 10;
+            data.push({ time: time + i*60, open, high: Math.max(open, close) + 2, low: Math.min(open, close) - 2, close });
+            price = close;
+        }
+        series.setData(data);
+
+        // Simulation
+        setInterval(() => {
+            const change = (Math.random() - 0.5) * 2;
+            price += change;
+            document.getElementById('price').innerText = price.toFixed(2);
+            document.getElementById('price').style.color = change > 0 ? 'var(--up)' : 'var(--down)';
+            
+            const last = data[data.length-1];
+            series.update({ ...last, close: price, high: Math.max(last.high, price), low: Math.min(last.low, price) });
+        }, 1000);
+    </script>
+</body>
+</html>

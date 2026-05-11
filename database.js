@@ -16,6 +16,7 @@ db.exec(`
     low REAL,
     close REAL,
     volume INTEGER,
+    delta REAL,
     UNIQUE(symbol, timeframe, timestamp)
   );
 
@@ -36,7 +37,11 @@ db.exec(`
     price REAL,
     quantity INTEGER,
     status TEXT,
-    timestamp TEXT
+    timestamp TEXT,
+    signal_id INTEGER,
+    stop_loss REAL,
+    take_profit REAL,
+    exit_price REAL
   );
 
   CREATE TABLE IF NOT EXISTS strategy_signals (
@@ -78,8 +83,8 @@ db.exec(`
 `);
 
 const insertCandle = db.prepare(`
-  INSERT OR REPLACE INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT OR REPLACE INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume, delta)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const insertTrade = db.prepare(`
@@ -95,6 +100,31 @@ const insertSignal = db.prepare(`
 const updateSignalStatus = db.prepare(`
   UPDATE strategy_signals SET status = ? WHERE id = ?
 `);
+
+function savePaperOrder(order) {
+  const stmt = db.prepare(`
+    INSERT INTO paper_orders (symbol, side, price, quantity, status, timestamp, signal_id, stop_loss, take_profit)
+    VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
+  `);
+  return stmt.run(
+    order.symbol,
+    order.side,
+    order.price,
+    order.quantity,
+    new Date().toISOString(),
+    order.signal_id,
+    order.stop_loss,
+    order.take_profit
+  );
+}
+
+function updatePaperOrder(id, status, exitPrice) {
+  db.prepare(`UPDATE paper_orders SET status = ?, exit_price = ? WHERE id = ?`).run(status, exitPrice, id);
+}
+
+function getOpenPaperOrders(symbol) {
+  return db.prepare(`SELECT * FROM paper_orders WHERE symbol = ? AND status = 'OPEN'`).all(symbol);
+}
 
 function getPriorDayLevels(symbol) {
   const today = new Date().toISOString().split('T')[0];
@@ -241,7 +271,7 @@ module.exports = {
   getAlgoStats,
   saveSessionStats,
   saveSignal: (sig) => {
-    insertSignal.run(sig.symbol, sig.algo_name, sig.side, sig.entry_price, sig.target1, sig.target2, sig.target, sig.stop, JSON.stringify(sig.reasons), new Date().toISOString());
+    return insertSignal.run(sig.symbol, sig.algo_name, sig.side, sig.entry_price, sig.target1, sig.target2, sig.target, sig.stop, JSON.stringify(sig.reasons), new Date().toISOString());
   },
 
   saveCandle: (candle) => {
@@ -253,7 +283,8 @@ module.exports = {
       candle.high,
       candle.low,
       candle.close,
-      candle.volume
+      candle.volume,
+      candle.delta || 0
     );
   },
   saveTrade: (trade) => {
@@ -265,12 +296,9 @@ module.exports = {
       trade.side || 'unknown'
     );
   },
-  savePaperOrder: (order) => {
-    db.prepare(`
-      INSERT INTO paper_orders (symbol, side, price, quantity, status, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(order.symbol, order.side, order.price, order.quantity, order.status, order.timestamp);
-  },
+  savePaperOrder,
+  updatePaperOrder,
+  getOpenPaperOrders,
   getPaperOrders: () => {
     return db.prepare(`SELECT * FROM paper_orders ORDER BY timestamp DESC LIMIT 50`).all();
   },

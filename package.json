@@ -33,7 +33,8 @@
     "luxon": "^3.7.2",
     "socket.io": "^4.8.3",
     "talib": "^2.0.3",
-    "trading-signals": "^7.4.3"
+    "trading-signals": "^7.4.3",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

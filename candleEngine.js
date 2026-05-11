@@ -199,8 +199,14 @@ function updateCandles(symbol, data) {
 
   // --- Cumulative Delta ---
   const side = data.side || data.s;
-  if (side === 1) indicatorState.cumDelta += size;
-  else if (side === 2) indicatorState.cumDelta -= size;
+  let tickDelta = 0;
+  if (side === 1) {
+    indicatorState.cumDelta += size;
+    tickDelta = size;
+  } else if (side === 2) {
+    indicatorState.cumDelta -= size;
+    tickDelta = -size;
+  }
 
   // --- VWAP ---
   indicatorState.vwap.cumPV += price * size;
@@ -213,13 +219,14 @@ function updateCandles(symbol, data) {
     const timeKey = getTimeKey(ts, unit, interval);
     if (!timeState[key]) timeState[key] = {};
     if (!timeState[key][timeKey]) {
-      timeState[key][timeKey] = { symbol, timeframe: tf, timestamp: timeKey, open: price, high: price, low: price, close: price, volume: size, vwap: currentVWAP };
+      timeState[key][timeKey] = { symbol, timeframe: tf, timestamp: timeKey, open: price, high: price, low: price, close: price, volume: size, delta: tickDelta, vwap: currentVWAP };
     } else {
       const c = timeState[key][timeKey];
       c.high = Math.max(c.high, price);
       c.low = Math.min(c.low, price);
       c.close = price;
       c.volume += size;
+      c.delta += tickDelta;
       c.vwap = currentVWAP;
     }
     saveCandle(timeState[key][timeKey]);
@@ -231,13 +238,14 @@ function updateCandles(symbol, data) {
     const key = `${symbol}_${tickSize}t`;
     if (!tickState[key]) tickState[key] = null;
     if (!tickState[key]) {
-      tickState[key] = { symbol, timeframe: `${tickSize}t`, timestamp: ts, open: price, high: price, low: price, close: price, volume: size, ticks: 1, vwap: currentVWAP };
+      tickState[key] = { symbol, timeframe: `${tickSize}t`, timestamp: ts, open: price, high: price, low: price, close: price, volume: size, delta: tickDelta, ticks: 1, vwap: currentVWAP };
     } else {
       const bar = tickState[key];
       bar.high = Math.max(bar.high, price);
       bar.low = Math.min(bar.low, price);
       bar.close = price;
       bar.volume += size;
+      bar.delta += tickDelta;
       bar.ticks += 1;
       if (bar.ticks >= tickSize) {
         saveCandle({ ...bar });
