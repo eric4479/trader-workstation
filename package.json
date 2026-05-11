@@ -1,0 +1,41 @@
+{
+  "name": "trader-workstation",
+  "version": "1.0.0",
+  "description": "Elite MNQ Trading Terminal",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "dashboard": "node -e \"require('./dashboard').startDashboard()\"",
+    "history": "node downloadHistory.js",
+    "history:90": "node downloadHistory.js 90",
+    "scanner": "bash -c 'source venv/bin/activate && python3 scanner.py'",
+    "monte-carlo": "bash -c 'source venv/bin/activate && python3 monte_carlo.py'",
+    "check-db": "node check_db.js",
+    "find-contract": "node find_contract.js",
+    "setup": "bash setup_venv.sh",
+    "test": "echo \"No automated tests configured yet\" && exit 0"
+  },
+  "keywords": [
+    "trading",
+    "futures",
+    "mnq",
+    "topstepx"
+  ],
+  "author": "Antigravity",
+  "license": "ISC",
+  "dependencies": {
+    "@microsoft/signalr": "^10.0.0",
+    "axios": "^1.16.0",
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "luxon": "^3.7.2",
+    "socket.io": "^4.8.3",
+    "talib": "^2.0.3",
+    "trading-signals": "^7.4.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

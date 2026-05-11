@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elite Terminal X | Modern V2</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg: #05070a;
+      --panel: #0d1117;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --up: #23d18b;
+      --down: #ff4757;
+      --text: #c9d1d9;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: 300px 1fr 340px;
+      grid-template-rows: 60px 1fr 200px;
+      height: 100vh;
+      gap: 1px;
+      background: var(--border);
+    }
+
+    .panel { background: var(--panel); padding: 15px; overflow: hidden; display: flex; flex-direction: column; }
+    
+    /* Header */
+    .header { grid-column: span 3; display: flex; align-items: center; justify-content: space-between; background: #000; padding: 0 20px; }
+    .price-tape { font-family: 'JetBrains Mono'; font-size: 1.5rem; font-weight: 800; display: flex; gap: 20px; }
+    
+    /* Signal Stream */
+    .signal-stream { grid-row: span 2; overflow-y: auto; }
+    .signal-card { border-left: 3px solid var(--accent); background: rgba(255,255,255,0.02); padding: 12px; margin-bottom: 10px; border-radius: 4px; }
+
+    /* Main Chart */
+    .chart-panel { position: relative; padding: 0; }
+    #v2-chart { flex: 1; }
+    #v2-vp { position: absolute; top: 0; right: 0; width: 100px; height: 100%; pointer-events: none; opacity: 0.3; }
+
+    /* Internals */
+    .internals-panel { gap: 15px; }
+    .gauge { background: #161b22; padding: 10px; border-radius: 6px; }
+    .gauge-bar { height: 4px; background: #30363d; margin-top: 8px; border-radius: 2px; overflow: hidden; }
+    .gauge-fill { height: 100%; transition: width 0.3s; }
+
+    /* Performance Footer */
+    .footer-panel { grid-column: span 2; }
+    .leaderboard-mini { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .leaderboard-mini td { padding: 8px; border-bottom: 1px solid #21262d; }
+
+    .badge { padding: 2px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 800; }
+    .badge-up { background: rgba(35, 209, 139, 0.1); color: var(--up); }
+    .badge-down { background: rgba(255, 71, 87, 0.1); color: var(--down); }
+
+    h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 10px; }
+    
+    .news-ticker { grid-column: span 3; background: #161b22; height: 30px; display: flex; align-items: center; overflow: hidden; white-space: nowrap; font-size: 0.75rem; border-top: 1px solid var(--border); }
+    .ticker-content { display: inline-block; padding-left: 100%; animation: ticker 30s linear infinite; }
+    @keyframes ticker { 0% { transform: translate(0, 0); } 100% { transform: translate(-100%, 0); } }
+    .news-item { margin-right: 50px; color: #8b949e; }
+    .news-item b { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="grid-container">
+    <div class="header">
+      <div style="font-weight: 800; color: var(--accent);">V2 MODERN TERMINAL</div>
+      <div class="price-tape">
+        <span id="v2-price">0.00</span>
+        <span id="v2-pnl" style="font-size: 1rem; align-self: center;">$0.00</span>
+      </div>
+      <div style="font-size: 0.8rem; color: #8b949e;">MNQ FUTURE · PROJECTX FEED</div>
+    </div>
+
+    <div class="panel signal-stream">
+      <h3>Signal Intelligence</h3>
+      <div id="v2-signals"></div>
+    </div>
+
+    <div class="panel chart-panel">
+      <div id="v2-chart"></div>
+      <canvas id="v2-vp"></canvas>
+    </div>
+
+    <div class="panel internals-panel">
+      <h3>Market Internals</h3>
+      <div class="gauge">
+        <div style="display:flex; justify-content:space-between; font-size:0.8rem;"><span>RSI</span><span id="v2-rsi">50</span></div>
+        <div class="gauge-bar"><div id="v2-rsi-bar" class="gauge-fill" style="width: 50%; background: var(--accent);"></div></div>
+      </div>
+      <div class="gauge">
+        <div style="display:flex; justify-content:space-between; font-size:0.8rem;"><span>Delta</span><span id="v2-delta">0</span></div>
+        <div class="gauge-bar"><div id="v2-delta-bar" class="gauge-fill" style="width: 50%; background: var(--up);"></div></div>
+      </div>
+      <div class="gauge">
+        <div style="display:flex; justify-content:space-between; font-size:0.8rem;"><span>Bias</span><span id="v2-bias">Neutral</span></div>
+      </div>
+      <div id="v2-orders" style="margin-top:auto;">
+        <h3>Recent Paper Fills</h3>
+        <div id="v2-orders-list"></div>
+      </div>
+    </div>
+
+    <div class="panel footer-panel">
+      <h3>Algorithm Leaderboard</h3>
+      <table class="leaderboard-mini">
+        <thead><tr style="text-align: left; color:#8b949e;"><th>ALGO</th><th>WIN%</th><th>EV</th><th>RR</th></tr></thead>
+        <tbody id="v2-leaderboard"></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Confluence Conviction</h3>
+      <div style="position:relative; height: 100px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+        <div style="font-size: 2.2rem; font-weight: 800;" id="v2-conf-score">0%</div>
+        <div id="v2-conf-bias" style="font-size:0.6rem; font-weight:800; text-transform:uppercase;">Neutral</div>
+      </div>
+      <div id="v2-conf-reasons" style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center;"></div>
+    </div>
+    
+    <div class="news-ticker">
+      <div class="ticker-content" id="v2-news">
+        <span class="news-item">Waiting for market news...</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const audio = new Audio('/public/sounds/alert.mp3');
+
+    const chart = LightweightCharts.createChart(document.getElementById('v2-chart'), {
+      layout: { background: { color: 'transparent' }, textColor: '#c9d1d9', fontSize: 11 },
+      grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+      timeScale: { timeVisible: true, borderColor: '#30363d' },
+      rightPriceScale: { borderColor: '#30363d' },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+    });
+    const mainSeries = chart.addCandlestickSeries({ upColor: '#23d18b', downColor: '#ff4757', borderVisible: false, wickUpColor: '#23d18b', wickDownColor: '#ff4757' });
+    
+    const lines = {}; // key -> line object
+
+    const priceLines = {};
+
+    function updatePriceLine(id, price, color, title) {
+      if (!price) return;
+      if (priceLines[id]) {
+        mainSeries.removePriceLine(priceLines[id]);
+      }
+      priceLines[id] = mainSeries.createPriceLine({
+        price: price,
+        color: color,
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: title,
+      });
+    }
+
+    async function init() {
+      const res = await fetch('/api/candles?tf=15m&limit=500');
+      const data = await res.json();
+      mainSeries.setData(data.map(d => ({ 
+        time: Math.floor(new Date(d.timestamp).getTime() / 1000),
+        open: d.open, high: d.high, low: d.low, close: d.close 
+      })));
+      chart.timeScale().fitContent();
+    }
+
+    socket.on('levels', (data) => {
+      console.log('[LEVELS] Received:', data);
+      const { pivots, priorDay, orb1, orb5, orb15 } = data;
+      
+      if (priorDay) {
+        updatePriceLine('prior_vah', priorDay.vah, '#58a6ff', 'pVAH');
+        updatePriceLine('prior_val', priorDay.val, '#58a6ff', 'pVAL');
+        updatePriceLine('prior_poc', priorDay.poc, '#ff4757', 'pPOC');
+        updatePriceLine('asia_high', priorDay.asia_high, '#ffd700', 'Asia H');
+        updatePriceLine('asia_low', priorDay.asia_low, '#ffd700', 'Asia L');
+      }
+
+      if (orb1) {
+        updatePriceLine('orb1_h', orb1.high, '#ff4757', 'ORB 1m H');
+        updatePriceLine('orb1_l', orb1.low, '#ff4757', 'ORB 1m L');
+      }
+      if (orb5) {
+        updatePriceLine('orb5_h', orb5.high, '#23d18b', 'ORB 5m H');
+        updatePriceLine('orb5_l', orb5.low, '#23d18b', 'ORB 5m L');
+      }
+      if (orb15) {
+        updatePriceLine('orb15_h', orb15.high, '#58a6ff', 'ORB 15m H');
+        updatePriceLine('orb15_l', orb15.low, '#58a6ff', 'ORB 15m L');
+      }
+
+      if (pivots) {
+        updatePriceLine('pivot', pivots.pivot, '#8b949e', 'Pivot');
+      }
+    });
+
+    socket.on('tick', (data) => {
+      document.getElementById('v2-price').textContent = data.price.toFixed(2);
+      document.getElementById('v2-price').style.color = data.price >= parseFloat(document.getElementById('v2-price').textContent) ? 'var(--up)' : 'var(--down)';
+      
+      if (data.dailyPnL) {
+        const pnl = document.getElementById('v2-pnl');
+        pnl.textContent = `$${data.dailyPnL.pnl.toFixed(2)}`;
+        pnl.style.color = data.dailyPnL.pnl >= 0 ? 'var(--up)' : 'var(--down)';
+      }
+
+      const bar = data.bars['15m'];
+      if (bar) {
+        mainSeries.update({
+          time: Math.floor(new Date(bar.timestamp).getTime() / 1000),
+          open: bar.open, high: bar.high, low: bar.low, close: bar.close
+        });
+      }
+
+      if (data.indicators.rsi) {
+        const rsi = data.indicators.rsi;
+        document.getElementById('v2-rsi').textContent = rsi.toFixed(1);
+        document.getElementById('v2-rsi-bar').style.width = `${rsi}%`;
+      }
+      
+      const delta = data.indicators.cumDelta;
+      document.getElementById('v2-delta').textContent = delta.toLocaleString();
+      document.getElementById('v2-delta-bar').style.background = delta >= 0 ? 'var(--up)' : 'var(--down)';
+      
+      if (data.structure) {
+        document.getElementById('v2-bias').textContent = data.structure.trend;
+        document.getElementById('v2-bias').style.color = data.structure.trend === 'Bullish' ? 'var(--up)' : (data.structure.trend === 'Bearish' ? 'var(--down)' : 'var(--text)');
+      }
+
+      if (data.confluence) {
+        const score = data.confluence.score;
+        document.getElementById('v2-conf-score').textContent = `${Math.abs(score)}%`;
+        document.getElementById('v2-conf-score').style.color = score > 0 ? 'var(--up)' : (score < 0 ? 'var(--down)' : 'var(--text)');
+        document.getElementById('v2-conf-bias').textContent = score > 0 ? 'High Conviction Bullish' : (score < 0 ? 'High Conviction Bearish' : 'Neutral / Mixed');
+        document.getElementById('v2-conf-bias').style.color = score > 0 ? 'var(--up)' : (score < 0 ? 'var(--down)' : 'var(--text)');
+        document.getElementById('v2-conf-reasons').innerHTML = data.confluence.reasons.map(r => `<span class="badge ${score > 0 ? 'badge-up' : 'badge-down'}">${r}</span>`).join('');
+      }
+
+      if (data.indicators.va) {
+        const { vah, val, poc } = data.indicators.va;
+        drawVolumeProfile(data.indicators.volumeProfile, vah, val, poc);
+      }
+
+      // Update Session Lines on the fly if set
+      if (data.indicators.orb1 && data.indicators.orb1.set) {
+        updatePriceLine('orb1_h', data.indicators.orb1.high, '#ff4757', 'ORB 1m H');
+        updatePriceLine('orb1_l', data.indicators.orb1.low, '#ff4757', 'ORB 1m L');
+      }
+      if (data.indicators.orb5 && data.indicators.orb5.set) {
+        updatePriceLine('orb5_h', data.indicators.orb5.high, '#23d18b', 'ORB 5m H');
+        updatePriceLine('orb5_l', data.indicators.orb5.low, '#23d18b', 'ORB 5m L');
+      }
+      if (data.indicators.orb15 && data.indicators.orb15.set) {
+        updatePriceLine('orb15_h', data.indicators.orb15.high, '#58a6ff', 'ORB 15m H');
+        updatePriceLine('orb15_l', data.indicators.orb15.low, '#58a6ff', 'ORB 15m L');
+      }
+
+      if (data.priorDay) {
+        // Draw prior day levels if needed
+      }
+
+      if (data.news && data.news.length > 0) {
+        document.getElementById('v2-news').innerHTML = data.news.map(n => `<span class="news-item"><b>${n.time}</b> ${n.event} (${n.country}) - Impact: High</span>`).join('');
+      }
+
+      if (data.signals && data.signals.length > 0) {
+        audio.play().catch(() => {});
+        data.signals.forEach(s => {
+          const div = document.createElement('div');
+          div.className = 'signal-card';
+          div.style.borderColor = s.side === 'BUY' ? 'var(--up)' : 'var(--down)';
+          div.innerHTML = `
+            <div style="font-weight:800; font-size:0.7rem;">${s.type}</div>
+            <div style="font-size:1.1rem; color:#fff;">${s.side} @ ${data.price.toFixed(2)}</div>
+            <div style="font-size:0.6rem; color:#8b949e;">${new Date().toLocaleTimeString()}</div>
+          `;
+          const container = document.getElementById('v2-signals');
+          container.prepend(div);
+          if (container.children.length > 10) container.lastChild.remove();
+        });
+      }
+
+      if (data.leaderboardDetailed) {
+        document.getElementById('v2-leaderboard').innerHTML = data.leaderboardDetailed.slice(0, 5).map(algo => `
+          <tr>
+            <td>${algo.algo_name.replace('ALGO_','')}</td>
+            <td>${(algo.win_rate*100).toFixed(0)}%</td>
+            <td style="color:${algo.ev > 0 ? 'var(--up)' : 'var(--down)'}">${algo.ev.toFixed(1)}</td>
+            <td>${algo.rr.toFixed(1)}</td>
+          </tr>
+        `).join('');
+      }
+    });
+
+    socket.on('order_update', (orders) => {
+      document.getElementById('v2-orders-list').innerHTML = orders.slice(0, 3).map(o => `
+        <div style="font-size:0.7rem; margin-top:5px; display:flex; justify-content:space-between;">
+          <span style="color:${o.side === 'BUY' ? 'var(--up)' : 'var(--down)'}">${o.side}</span>
+          <span>${o.price.toFixed(2)}</span>
+          <span style="color:#8b949e;">${o.status}</span>
+        </div>
+      `).join('');
+    });
+
+    function drawVolumeProfile(profile, vah, val, poc) {
+      const canvas = document.getElementById('v2-vp');
+      const ctx = canvas.getContext('2d');
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const prices = Object.keys(profile).map(Number).sort((a,b) => b - a); // high to low
+      if (prices.length === 0) return;
+
+      const maxVol = Math.max(...Object.values(profile));
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      const range = maxPrice - minPrice;
+
+      prices.forEach(p => {
+        const vol = profile[p];
+        const y = ((maxPrice - p) / range) * canvas.height;
+        const width = (vol / maxVol) * canvas.width;
+        
+        ctx.fillStyle = (p <= vah && p >= val) ? 'rgba(88, 166, 255, 0.4)' : 'rgba(139, 148, 158, 0.2)';
+        if (p === poc) ctx.fillStyle = 'rgba(255, 71, 87, 0.8)';
+        
+        ctx.fillRect(canvas.width - width, y, width, canvas.height / prices.length);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
