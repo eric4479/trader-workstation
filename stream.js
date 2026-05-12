@@ -128,13 +128,23 @@ async function startStream(token, onUpdate) {
   // GatewaySummary is NOT emitted by the ProjectX market hub; summary-style
   // data (open/high/low/volume/change) is included in GatewayQuote payloads.
 
+  // Debounce DOM emissions: apply every delta immediately (O(1) map update)
+  // but only sort+emit once per 100 ms window to avoid O(N log N) sort on
+  // every high-frequency depth tick.
+  let domFlushTimer = null;
+  function scheduleDomFlush() {
+    if (domFlushTimer || !onUpdate) return;
+    domFlushTimer = setTimeout(() => {
+      domFlushTimer = null;
+      onUpdate({ type: 'depth', dom: getTopOfBook(10) });
+    }, 100);
+  }
+
   connection.on("GatewayDepth", (contractId, data) => {
     if (!data) return;
     const events = Array.isArray(data) ? data : [data];
     events.forEach(applyDepthDelta);
-    if (onUpdate) {
-      onUpdate({ type: 'depth', dom: getTopOfBook(10) });
-    }
+    scheduleDomFlush();
   });
 
   connection.onclose(() => console.log("[STREAM] SignalR disconnected"));

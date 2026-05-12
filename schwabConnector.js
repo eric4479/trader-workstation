@@ -111,7 +111,11 @@ class SchwabConnector {
   async start(onUpdate) {
     this.onUpdateCallback = onUpdate;
     const token = await this.authenticate();
-    if (!token) return;
+    if (!token) {
+      // Transient auth failure (e.g. network blip) — retry after 5 s
+      setTimeout(() => this.start(onUpdate), 5000);
+      return;
+    }
 
     const info = await this.getStreamerInfo();
     if (!info) return;
