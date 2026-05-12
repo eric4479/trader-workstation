@@ -15,14 +15,19 @@ const { getToken } = require("./auth");
   let highImpactNews = [];
 
   // Start Schwab Macro Stream (Real-time)
-  schwab.start((symbol, data) => {
+  // Callback receives (service, symbol, decodedData) where decodedData has named fields.
+  schwab.start((service, symbol, data) => {
     if (!globalInternals[symbol]) globalInternals[symbol] = {};
-    // Map Schwab streamer fields to internal structure
-    // Field 3: Last Price, 5: Net Change Percentage, 6: High, 7: Low
-    if (data['3']) globalInternals[symbol].price = data['3'];
-    if (data['5']) globalInternals[symbol].change = data['5'];
-    if (data['6']) globalInternals[symbol].high = data['6'];
-    if (data['7']) globalInternals[symbol].low = data['7'];
+    const s = globalInternals[symbol];
+    if (data.last      !== undefined) s.price      = data.last;
+    if (data.bid       !== undefined) s.bid        = data.bid;
+    if (data.ask       !== undefined) s.ask        = data.ask;
+    if (data.high      !== undefined) s.high       = data.high;
+    if (data.low       !== undefined) s.low        = data.low;
+    if (data.open      !== undefined) s.open       = data.open;
+    if (data.volume    !== undefined) s.volume     = data.volume;
+    if (data.netChange !== undefined) s.netChange  = data.netChange;
+    if (data.netChangePct !== undefined) s.change  = data.netChangePct;
   });
 
   (async () => {
@@ -52,17 +57,28 @@ const { getToken } = require("./auth");
     const priorDayLevels = getPriorDayLevels(CONTRACT_ID);
     let currentPrice = 0;
     let lastStatSave = 0;
+    let currentDom = { bids: [], asks: [] };
 
     await startStream(token, async (update) => {
+      // DOM depth updates — store and re-emit with next quote/trade
+      if (update.type === 'depth') {
+        currentDom = update.dom;
+        io.emit('depth', update.dom);
+        return;
+      }
+
       // 0. Update Dashboard common stats regardless of type
       if (update.type === 'quote') {
-        io.emit('tick', { 
+        io.emit('tick', {
           type: update.type,
           price: currentPrice, // last known
+          bid: update.bid,
+          ask: update.ask,
           indicators: update.indicators,
           dailyPnL: getDailyPnL(CONTRACT_ID),
           internals: globalInternals,
-          news: highImpactNews
+          news: highImpactNews,
+          dom: currentDom
         });
         return;
       }
