@@ -33,7 +33,7 @@ function calculateValueArea(profile) {
 
   let totalVolume = 0;
   let poc = prices[0];
-  let maxVol = 0;
+  let maxVol = -1;
 
   for (const p of prices) {
     const v = profile[p];
@@ -48,6 +48,9 @@ function calculateValueArea(profile) {
   let currentVolume = maxVol;
   let lowIdx = prices.indexOf(poc);
   let highIdx = lowIdx;
+
+  // Ensure we don't get stuck if targetVolume is 0 or sparse data
+  if (targetVolume <= 0) return { vah: poc, val: poc, poc: poc };
 
   while (currentVolume < targetVolume && (lowIdx > 0 || highIdx < prices.length - 1)) {
     const volBelow = (lowIdx > 0) ? (profile[prices[lowIdx - 1]] || 0) + (profile[prices[lowIdx - 2]] || 0) : 0;
@@ -73,8 +76,8 @@ function calculateValueArea(profile) {
   }
 
   return {
-    vah: prices[highIdx],
-    val: prices[lowIdx],
+    vah: prices[Math.min(highIdx, prices.length - 1)] || poc,
+    val: prices[Math.max(lowIdx, 0)] || poc,
     poc: poc
   };
 }
@@ -100,14 +103,30 @@ function updateCandles(symbol, data) {
     indicatorState.market.bidSize = data.bidSize;
     indicatorState.market.ask = data.askPrice;
     indicatorState.market.askSize = data.askSize;
-    return { indicators: { ...indicatorState, market: indicatorState.market } };
+    return { 
+      timeState, 
+      tickState, 
+      indicators: { 
+        ...indicatorState, 
+        vwap: indicatorState.vwap.cumV > 0 ? indicatorState.vwap.cumPV / indicatorState.vwap.cumV : null,
+        market: { ...indicatorState.market } 
+      } 
+    };
   }
 
   if (data.type === 'summary') {
     indicatorState.market.high = data.high;
     indicatorState.market.low = data.low;
     indicatorState.market.volume = data.volume;
-    return { indicators: { ...indicatorState, market: indicatorState.market } };
+    return { 
+      timeState, 
+      tickState, 
+      indicators: { 
+        ...indicatorState, 
+        vwap: indicatorState.vwap.cumV > 0 ? indicatorState.vwap.cumPV / indicatorState.vwap.cumV : null,
+        market: { ...indicatorState.market } 
+      } 
+    };
   }
 
   // Handle Trade logic (as before)

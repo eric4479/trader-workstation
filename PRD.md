@@ -37,3 +37,27 @@
 2. **Intelligence:** Build session-based algos and confluence logic.
 3. **Interface:** Upgrade the dashboard to a "Command Center" aesthetic.
 4. **Validation:** Live paper trading to verify execution and signal accuracy.
+
+
+## 7. Suggestions for Improvement
+- **Fix "No data" error:** The terminal crashes when there is no data available.
+- **Add more strategies:** Implement the strategies mentioned in the PRD.
+- **Add more timeframes:** Implement the timeframes mentioned in the PRD.
+- **Add more features:** Implement the features mentioned in the PRD.
+
+## 8. What the user will get
+    • A real-time trading terminal for futures markets.
+    • A dashboard to visualize market data.
+    • A suite of strategies to generate trading signals.
+    • A risk management system to protect capital.
+    • A way to backtest strategies on historical data. (ORB for MNQ, MGC, MES, YM)
+    • A way to paper trade strategies to verify performance.
+    • A way to optimize strategies based on historical data.
+
+
+
+## 9. How to start
+    1. Clone the repository.
+    2. Install the dependencies.
+    3. Run the terminal.
+

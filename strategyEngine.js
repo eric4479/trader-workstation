@@ -3,6 +3,7 @@ const talib = require('talib');
 
 function runTALibPattern(patternName, o, h, l, c) {
   return new Promise((resolve) => {
+    if (!c || c.length < 10) return resolve(0);
     talib.execute({
       name: patternName,
       startIdx: 0,
@@ -126,12 +127,16 @@ async function getAlgorithms(currentPrice, ind, orb, vwap, bars, session = {}, p
   const c = bars.map(b => b.close);
   const v = bars.map(b => b.volume);
   
-  const [engulfing, hammer, morningStar, shootingStar, marubozu] = await Promise.all([
+  const [engulfing, hammer, morningStar, shootingStar, marubozu, doji, harami, pieringLine, cloudCover] = await Promise.all([
     runTALibPattern("CDLENGULFING", o, h, l, c),
     runTALibPattern("CDLHAMMER", o, h, l, c),
     runTALibPattern("CDLMORNINGSTAR", o, h, l, c),
     runTALibPattern("CDLSHOOTINGSTAR", o, h, l, c),
-    runTALibPattern("CDLMARUBOZU", o, h, l, c)
+    runTALibPattern("CDLMARUBOZU", o, h, l, c),
+    runTALibPattern("CDLDOJI", o, h, l, c),
+    runTALibPattern("CDLHARAMI", o, h, l, c),
+    runTALibPattern("CDLPIERCING", o, h, l, c),
+    runTALibPattern("CDLDARKCLOUDCOVER", o, h, l, c)
   ]);
 
   // 1. ALGO_MEAN_REVERSION
@@ -255,6 +260,13 @@ async function getAlgorithms(currentPrice, ind, orb, vwap, bars, session = {}, p
     else if (currentPrice < minPrevLow && deltas[lastIdx] > minPrevDelta) {
       signals.push({ algo: 'ALGO_DELTA_DIVERGENCE', side: 'BUY', reasons: ['Price New Low', 'Delta Divergence (Selling Exhaustion)'] });
     }
+  }
+
+  // 10. ALGO_MEAN_REVERSION_V2 (RSI + Doji/Harami)
+  if (ind.rsi < 30 && (doji > 0 || harami > 0 || pieringLine > 0)) {
+    signals.push({ algo: 'ALGO_MEAN_REVERSION_V2', side: 'BUY', reasons: ['RSI Oversold', 'Reversal Pattern'] });
+  } else if (ind.rsi > 70 && (doji > 0 || harami < 0 || cloudCover > 0)) {
+    signals.push({ algo: 'ALGO_MEAN_REVERSION_V2', side: 'SELL', reasons: ['RSI Overbought', 'Reversal Pattern'] });
   }
 
   return signals;
