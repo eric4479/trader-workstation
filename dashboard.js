@@ -93,6 +93,7 @@ function startDashboard(onReady) {
       const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32'
         ? path.join(__dirname, 'venv', 'Scripts', 'python.exe')
         : path.join(__dirname, 'venv', 'bin', 'python3'));
+      const pythonBin = path.join(__dirname, 'venv', 'bin', 'python3');
       const output = execFileSync(pythonBin, [path.join(__dirname, 'scanner.py')], {
         cwd: __dirname,
         timeout: 30000,

@@ -17,6 +17,7 @@
     "test": "node --test",
     "check:conflicts": "node scripts/checkConflicts.js",
     "backtest": "node backtestEngine.js"
+    "test": "node --test"
   },
   "keywords": [
     "trading",
