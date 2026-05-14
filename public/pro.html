@@ -470,6 +470,8 @@
             }
             container.innerHTML = positions.map(p => {
                 const pnl = (p.side === 'BUY' ? (currentPrice - p.price) : (p.price - currentPrice)) * 2;
+                const stopLoss = Number.isFinite(p.stop_loss) ? p.stop_loss.toFixed(2) : '—';
+                const takeProfit = Number.isFinite(p.take_profit) ? p.take_profit.toFixed(2) : '—';
                 return `
                     <div style="padding: 12px; border-bottom: 1px solid #111; font-family: 'JetBrains Mono';">
                         <div style="display:flex; justify-content:space-between; margin-bottom: 5px;">
@@ -478,7 +480,7 @@
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size: 0.65rem; color: var(--text-dim);">
                             <span>ENTRY: ${p.price.toFixed(2)}</span>
-                            <span>SL: ${p.stop_loss.toFixed(2)} | TP: ${p.take_profit.toFixed(2)}</span>
+                            <span>SL: ${stopLoss} | TP: ${takeProfit}</span>
                         </div>
                     </div>
                 `;
@@ -633,10 +635,12 @@
 
         async function placeOrder(side) {
             const qty = document.getElementById('order-qty').value;
+            const stopLoss = side === 'BUY' ? currentPrice - 10 : currentPrice + 10;
+            const takeProfit = side === 'BUY' ? currentPrice + 20 : currentPrice - 20;
             await fetch('/api/paper/order', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ side, price: currentPrice, quantity: parseInt(qty) })
+                body: JSON.stringify({ side, price: currentPrice, quantity: parseInt(qty), stop_loss: stopLoss, take_profit: takeProfit })
             });
         }
 

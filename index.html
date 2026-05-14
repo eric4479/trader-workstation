@@ -563,10 +563,12 @@
     }
 
     async function placeOrder(side) {
+      const stopLoss = side === 'BUY' ? currentPrice - 10 : currentPrice + 10;
+      const takeProfit = side === 'BUY' ? currentPrice + 20 : currentPrice - 20;
       await fetch('/api/paper/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ side, price: currentPrice, quantity: 1 })
+        body: JSON.stringify({ side, price: currentPrice, quantity: 1, stop_loss: stopLoss, take_profit: takeProfit })
       });
     }
 
