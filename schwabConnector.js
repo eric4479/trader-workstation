@@ -55,9 +55,13 @@ class SchwabConnector {
     this._refreshTimer = null;
   }
 
+  hasCredentials() {
+    return Boolean(process.env.SCHWAB_REFRESH_TOKEN && process.env.SCHWAB_APP_KEY);
+  }
+
   async authenticate() {
-    if (!process.env.SCHWAB_REFRESH_TOKEN || !process.env.SCHWAB_APP_KEY) {
-      console.warn('[SCHWAB] Missing SCHWAB_REFRESH_TOKEN / SCHWAB_APP_KEY in .env — skipping');
+    if (!this.hasCredentials()) {
+      console.warn('[SCHWAB] Missing SCHWAB_REFRESH_TOKEN / SCHWAB_APP_KEY in .env — optional Schwab stream disabled');
       return null;
     }
 
@@ -112,8 +116,10 @@ class SchwabConnector {
     this.onUpdateCallback = onUpdate;
     const token = await this.authenticate();
     if (!token) {
-      // Transient auth failure (e.g. network blip) — retry after 5 s
-      setTimeout(() => this.start(onUpdate), 5000);
+      if (this.hasCredentials()) {
+        // Transient auth failure (e.g. network blip) — retry after 5 s
+        setTimeout(() => this.start(onUpdate), 5000);
+      }
       return;
     }
 

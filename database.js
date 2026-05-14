@@ -1,7 +1,11 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database('trading_data.db');
+const DB_PATH = process.env.TRADING_DB_PATH
+  ? path.resolve(process.env.TRADING_DB_PATH)
+  : path.join(__dirname, 'trading_data.db');
+
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
 // Create tables
@@ -262,6 +266,7 @@ function getDailyPnL(symbol) {
 
 module.exports = {
   db,
+  DB_PATH,
   getAlgoStatsDetailed,
   getAllSignals,
   getDailyPnL,

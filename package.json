@@ -14,7 +14,7 @@
     "check-db": "node check_db.js",
     "find-contract": "node find_contract.js",
     "setup": "bash setup_venv.sh",
-    "test": "echo \"No automated tests configured yet\" && exit 0"
+    "test": "node --test"
   },
   "keywords": [
     "trading",
