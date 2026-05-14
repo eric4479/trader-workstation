@@ -10,6 +10,14 @@ process.env.CONTRACT_ID = 'CON.F.US.MNQ.M26';
 const database = require('../database');
 const { getSignals } = require('../strategyEngine');
 const schwab = require('../schwabConnector');
+const { inferPointValue, runOrbBacktest, runBacktest } = require('../backtestEngine');
+const { findConflictMarkers } = require('../scripts/checkConflicts');
+
+
+test('repository has no unresolved merge conflict markers', () => {
+  const conflicts = findConflictMarkers(path.resolve(__dirname, '..'));
+  assert.deepEqual(conflicts, []);
+});
 
 test('database uses an explicit, absolute path and creates core tables', () => {
   assert.equal(database.DB_PATH, process.env.TRADING_DB_PATH);
@@ -77,4 +85,38 @@ test('Schwab optional stream reports missing credentials without retry loop', as
   assert.equal(schwab.hasCredentials(), false);
   const token = await schwab.authenticate();
   assert.equal(token, null);
+});
+
+
+test('ORB backtester ranks a completed breakout with futures P&L metrics', () => {
+  const symbol = 'CON.F.US.MNQ.M26';
+  const start = Date.UTC(2026, 0, 2, 14, 30);
+  for (let i = 0; i < 25; i += 1) {
+    const timestamp = new Date(start + i * 60000).toISOString();
+    const candle = i < 15
+      ? { open: 100, high: 101, low: 99, close: 100, volume: 100 }
+      : i === 16
+        ? { open: 101, high: 102, low: 100.5, close: 101.5, volume: 200 }
+        : i === 17
+          ? { open: 101.5, high: 122, low: 101.25, close: 121.5, volume: 300 }
+          : { open: 100, high: 100.5, low: 99.5, close: 100, volume: 100 };
+    database.saveCandle({ symbol, timeframe: '1m', timestamp, delta: 0, ...candle });
+  }
+
+  const report = runOrbBacktest(symbol, { orMinutes: 15, targetPoints: 20, stopPoints: 10, quantity: 1 });
+  assert.equal(report.trades, 1);
+  assert.equal(report.wins, 1);
+  assert.equal(report.pnl, 40);
+  assert.equal(report.point_value, inferPointValue(symbol));
+  assert.equal(report.sample_trades[0].outcome, 'WIN');
+});
+
+
+test('backtest sweep ranks multiple ORB parameter combinations', () => {
+  const report = runBacktest({ symbols: 'CON.F.US.MNQ.M26', sweep: true, orMinutes: '5,15', targetPoints: '10,20', stopPoints: '10', limit: 1000 });
+  assert.equal(report.sweep, true);
+  assert.equal(report.results.length, 4);
+  for (let i = 1; i < report.results.length; i += 1) {
+    assert.ok(report.results[i - 1].ev_points >= report.results[i].ev_points);
+  }
 });

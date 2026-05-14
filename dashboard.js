@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { db, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
+const { runBacktest } = require('./backtestEngine');
 const { CONTRACT_ID } = require('./config');
 
 function getBars(timeframe, limit = 1000) {
@@ -89,6 +90,9 @@ function startDashboard(onReady) {
 
   app.get('/api/scanner', (req, res) => {
     try {
+      const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32'
+        ? path.join(__dirname, 'venv', 'Scripts', 'python.exe')
+        : path.join(__dirname, 'venv', 'bin', 'python3'));
       const pythonBin = path.join(__dirname, 'venv', 'bin', 'python3');
       const output = execFileSync(pythonBin, [path.join(__dirname, 'scanner.py')], {
         cwd: __dirname,
@@ -157,6 +161,24 @@ function startDashboard(onReady) {
   app.get('/api/signals', (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     res.json(getAllSignals(CONTRACT_ID, limit));
+  });
+
+
+  app.get('/api/backtest', (req, res) => {
+    try {
+      const report = runBacktest({
+        symbols: req.query.symbols || req.query.symbol,
+        orMinutes: req.query.or || req.query.orMinutes,
+        targetPoints: req.query.target,
+        stopPoints: req.query.stop,
+        quantity: req.query.quantity,
+        limit: req.query.limit,
+        sweep: req.query.sweep
+      });
+      res.json({ success: true, ...report });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.get('/api/analytics', (req, res) => {
