@@ -2,10 +2,11 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
+from pathlib import Path
 from datetime import datetime
 
 # Configuration
-DB_PATH = 'trading_data.db'
+DB_PATH = os.environ.get('TRADING_DB_PATH', str(Path(__file__).resolve().with_name('trading_data.db')))
 MNQ_MULTIPLIER = 2.0  # $2 per point
 
 def get_db_connection():

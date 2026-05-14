@@ -80,6 +80,7 @@ MARKET_HUB=https://rtc.topstepx.com/hubs/market
 | `npm run history` | Download 30 days of OHLCV bars from TopstepX |
 | `npm run history:90` | Download 90 days of OHLCV bars |
 | `npm run scanner` | Python Z-score / Kelly opportunity scanner |
+| `npm run backtest` | Run ORB backtests and rank symbols/parameters by expectancy |
 | `npm run monte-carlo` | Python Monte Carlo risk simulation |
 | `npm run check-db` | Print candle counts & 5 latest bars from the database |
 | `npm run find-contract` | Query TopstepX for available MNQ contract IDs |
@@ -132,7 +133,8 @@ trader-workstation/
 ├── 📄 stream.js             — SignalR market data websocket client
 ├── 📄 candleEngine.js       — OHLCV candle builder (tick → 1m/5m bars)
 ├── 📄 strategyEngine.js     — Multi-algo signal engine (Mean Rev, ORB, EMA, Volume)
-├── 📄 analyzeORB.js         — Opening Range Breakout detector
+├── 📄 analyzeORB.js         — Legacy Opening Range Breakout detector
+├── 📄 backtestEngine.js     — Parameterized ORB backtester with EV/Kelly ranking
 │
 ├── 📄 database.js           — SQLite schema, candle CRUD, signals, paper orders
 ├── 📄 downloadHistory.js    — Bulk historical bar downloader (all timeframes)
@@ -200,6 +202,7 @@ The dashboard server exposes a REST API at `http://localhost:3000`:
 | `/api/candles?tf=1m&limit=500` | GET | OHLCV candles for charting |
 | `/api/signals?limit=50` | GET | Recent strategy signals |
 | `/api/analytics` | GET | Leaderboard stats + daily P&L |
+| `/api/backtest?symbols=CON.F.US.MNQ.M26&or=15&target=20&stop=10` | GET | Run ORB backtests and return EV/Kelly-ranked results |
 | `/api/paper/orders` | GET | All paper trade orders |
 | `/api/paper/order` | POST | Place a paper trade manually |
 
@@ -224,6 +227,22 @@ The dashboard server exposes a REST API at `http://localhost:3000`:
 # Inspect the database from the command line
 sqlite3 trading_data.db ".tables"
 sqlite3 trading_data.db "SELECT timeframe, count(*) FROM candles GROUP BY timeframe;"
+```
+
+---
+
+## 🧪 Backtesting
+
+Run the built-in ORB backtester against stored 1-minute candles. Results include trade counts, win rate, expectancy in points, P&L using inferred futures point values, max drawdown, profit factor, Sharpe-like score, and Kelly fraction.
+
+```bash
+npm run backtest -- --symbols=CON.F.US.MNQ.M26 --or=15 --target=20 --stop=10
+```
+
+Use `--sweep=true` to rank an ORB parameter matrix, or call the dashboard API for programmatic ranking:
+
+```bash
+curl 'http://localhost:3000/api/backtest?symbols=CON.F.US.MNQ.M26&sweep=true&or=1,5,15&target=10,20,30&stop=10,15'
 ```
 
 ---

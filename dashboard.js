@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { db, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
+const { runBacktest } = require('./backtestEngine');
 const { CONTRACT_ID } = require('./config');
 
 function getBars(timeframe, limit = 1000) {
@@ -87,12 +89,20 @@ function startDashboard(onReady) {
   });
 
   app.get('/api/scanner', (req, res) => {
-    const { execSync } = require('child_process');
     try {
-      const output = execSync('./venv/bin/python3 scanner.py').toString();
+      const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32'
+        ? path.join(__dirname, 'venv', 'Scripts', 'python.exe')
+        : path.join(__dirname, 'venv', 'bin', 'python3'));
+      const output = execFileSync(pythonBin, [path.join(__dirname, 'scanner.py')], {
+        cwd: __dirname,
+        timeout: 30000,
+        encoding: 'utf8',
+        env: { ...process.env }
+      });
       res.json({ success: true, output });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      const stderr = err.stderr ? err.stderr.toString() : '';
+      res.status(500).json({ success: false, error: err.message, stderr });
     }
   });
 
@@ -103,17 +113,43 @@ function startDashboard(onReady) {
   });
 
   app.post('/api/paper/order', (req, res) => {
-    const { side, price, quantity } = req.body;
+    const side = String(req.body.side || '').toUpperCase();
+    const price = Number(req.body.price);
+    const quantity = Number.parseInt(req.body.quantity, 10);
+    const stopLoss = req.body.stop_loss === undefined ? null : Number(req.body.stop_loss);
+    const takeProfit = req.body.take_profit === undefined ? null : Number(req.body.take_profit);
+
+    if (!['BUY', 'SELL'].includes(side)) {
+      return res.status(400).json({ success: false, error: 'side must be BUY or SELL' });
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ success: false, error: 'price must be a positive number' });
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({ success: false, error: 'quantity must be a positive integer' });
+    }
+    if (!Number.isFinite(stopLoss) || !Number.isFinite(takeProfit)) {
+      return res.status(400).json({ success: false, error: 'stop_loss and take_profit are required numeric bracket levels' });
+    }
+    if (side === 'BUY' && !(stopLoss < price && takeProfit > price)) {
+      return res.status(400).json({ success: false, error: 'BUY orders require stop_loss below price and take_profit above price' });
+    }
+    if (side === 'SELL' && !(stopLoss > price && takeProfit < price)) {
+      return res.status(400).json({ success: false, error: 'SELL orders require stop_loss above price and take_profit below price' });
+    }
+
     const order = {
       symbol: CONTRACT_ID,
       side,
       price,
       quantity,
-      status: 'FILLED', // Simplified paper trade: instant fill
-      timestamp: new Date().toISOString()
+      signal_id: req.body.signal_id || null,
+      stop_loss: stopLoss,
+      take_profit: takeProfit
     };
-    savePaperOrder(order);
-    res.json({ success: true, order });
+    const result = savePaperOrder(order);
+    const savedOrder = { id: result.lastInsertRowid, status: 'OPEN', ...order };
+    res.json({ success: true, order: savedOrder });
     io.emit('order_update', getPaperOrders());
   });
 
@@ -124,6 +160,24 @@ function startDashboard(onReady) {
   app.get('/api/signals', (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     res.json(getAllSignals(CONTRACT_ID, limit));
+  });
+
+
+  app.get('/api/backtest', (req, res) => {
+    try {
+      const report = runBacktest({
+        symbols: req.query.symbols || req.query.symbol,
+        orMinutes: req.query.or || req.query.orMinutes,
+        targetPoints: req.query.target,
+        stopPoints: req.query.stop,
+        quantity: req.query.quantity,
+        limit: req.query.limit,
+        sweep: req.query.sweep
+      });
+      res.json({ success: true, ...report });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.get('/api/analytics', (req, res) => {
