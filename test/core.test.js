@@ -11,6 +11,13 @@ const database = require('../database');
 const { getSignals } = require('../strategyEngine');
 const schwab = require('../schwabConnector');
 const { inferPointValue, runOrbBacktest, runBacktest } = require('../backtestEngine');
+const { findConflictMarkers } = require('../scripts/checkConflicts');
+
+
+test('repository has no unresolved merge conflict markers', () => {
+  const conflicts = findConflictMarkers(path.resolve(__dirname, '..'));
+  assert.deepEqual(conflicts, []);
+});
 
 test('database uses an explicit, absolute path and creates core tables', () => {
   assert.equal(database.DB_PATH, process.env.TRADING_DB_PATH);

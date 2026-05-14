@@ -15,6 +15,7 @@
     "find-contract": "node find_contract.js",
     "setup": "bash setup_venv.sh",
     "test": "node --test",
+    "check:conflicts": "node scripts/checkConflicts.js",
     "backtest": "node backtestEngine.js"
   },
   "keywords": [
