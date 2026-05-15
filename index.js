@@ -11,24 +11,27 @@ const { getToken } = require("./auth");
   // Cleanup old data on startup (7 days)
   cleanupOldData(7);
 
-  let globalInternals = {};
-  let highImpactNews = [];
+  let globalInternals = { status: 'INITIALIZING', data: {} };
+  let highImpactNews = { status: 'INITIALIZING', data: [] };
+  let schwabStatus = 'OFFLINE';
 
-  // Start Schwab Macro Stream (Real-time)
-  // Callback receives (service, symbol, decodedData) where decodedData has named fields.
-  schwab.start((service, symbol, data) => {
-    if (!globalInternals[symbol]) globalInternals[symbol] = {};
-    const s = globalInternals[symbol];
-    if (data.last      !== undefined) s.price      = data.last;
-    if (data.bid       !== undefined) s.bid        = data.bid;
-    if (data.ask       !== undefined) s.ask        = data.ask;
-    if (data.high      !== undefined) s.high       = data.high;
-    if (data.low       !== undefined) s.low        = data.low;
-    if (data.open      !== undefined) s.open       = data.open;
-    if (data.volume    !== undefined) s.volume     = data.volume;
-    if (data.netChange !== undefined) s.netChange  = data.netChange;
-    if (data.netChangePct !== undefined) s.change  = data.netChangePct;
-  });
+  if (schwab.hasCredentials()) {
+    schwabStatus = 'CONNECTING';
+    schwab.start((service, symbol, data) => {
+      schwabStatus = 'ACTIVE';
+      if (!globalInternals.data[symbol]) globalInternals.data[symbol] = {};
+      const s = globalInternals.data[symbol];
+      if (data.last      !== undefined) s.price      = data.last;
+      if (data.bid       !== undefined) s.bid        = data.bid;
+      if (data.ask       !== undefined) s.ask        = data.ask;
+      if (data.high      !== undefined) s.high       = data.high;
+      if (data.low       !== undefined) s.low        = data.low;
+      if (data.open      !== undefined) s.open       = data.open;
+      if (data.volume    !== undefined) s.volume     = data.volume;
+      if (data.netChange !== undefined) s.netChange  = data.netChange;
+      if (data.netChangePct !== undefined) s.change  = data.netChangePct;
+    });
+  }
 
   (async () => {
     console.log("🚀 Starting TopstepX Engine…");
@@ -39,13 +42,21 @@ const { getToken } = require("./auth");
     
     // Poll Market Internals & News every 60s
     setInterval(async () => {
-      globalInternals = await getMarketInternals() || globalInternals;
-      highImpactNews = await getEconomicCalendar() || highImpactNews;
+      const internals = await getMarketInternals();
+      if (internals && internals.status === 'ACTIVE') {
+        globalInternals.status = 'ACTIVE';
+        Object.assign(globalInternals.data, internals.data);
+      } else if (internals) {
+        globalInternals.status = internals.status;
+      }
+
+      const news = await getEconomicCalendar();
+      if (news) highImpactNews = news;
     }, 60000);
 
     // Initial fetch
-    getMarketInternals().then(data => globalInternals = data);
-    getEconomicCalendar().then(data => highImpactNews = data);
+    getMarketInternals().then(data => { if (data) globalInternals = data; });
+    getEconomicCalendar().then(data => { if (data) highImpactNews = data; });
 
     // Risk Management State
     let lastSignalTimePerAlgo = {}; 
@@ -78,6 +89,7 @@ const { getToken } = require("./auth");
           dailyPnL: getDailyPnL(CONTRACT_ID),
           internals: globalInternals,
           news: highImpactNews,
+          schwabStatus: schwabStatus,
           dom: currentDom
         });
         return;
@@ -209,7 +221,7 @@ const { getToken } = require("./auth");
       io.emit('tick', { 
         type: 'trade',
         price, size, ts, bars, tickBars, 
-        indicators: { ...indicators, ...result.indicators }, 
+        indicators: { ...indicators, ...result.indicators, adx: result.indicators.adx, chop: result.indicators.chop, roc: result.indicators.roc },
         signals: result.signals, 
         confluence: result.confluence,
         structure: result.structure,
@@ -219,6 +231,7 @@ const { getToken } = require("./auth");
         dailyPnL,
         internals: globalInternals,
         news: highImpactNews,
+        schwabStatus: schwabStatus,
         positions: openOrders
       });
     });

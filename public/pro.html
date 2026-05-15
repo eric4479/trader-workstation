@@ -167,7 +167,9 @@
             <span class="ticker-item"><b>DXY</b> <span id="tick-dxy">104.50</span> <span class="up">+0.05%</span></span>
             <span class="ticker-item"><b>VIX</b> <span id="tick-vix">14.22</span> <span class="down">-2.40%</span></span>
         </div>
-        <div class="market-status">NY4 LIVE</div>
+        <div class="market-status" id="market-status-text">TSX: LIVE</div>
+        <div id="finnhub-status" style="font-size: 0.6rem; color: var(--text-dim);">FINNHUB: OFFLINE</div>
+        <div id="schwab-status" style="font-size: 0.6rem; color: var(--text-dim);">SCHWAB: OFFLINE</div>
     </header>
 
     <nav>
@@ -195,10 +197,15 @@
                 <div class="pane pane-internals">
                     <div class="pane-header"><span>Market Internals</span></div>
                     <div class="stat-row"><span>$ADD (NYSE)</span><span class="stat-val up">+1,420</span></div>
-                    <div class="stat-row"><span>$TICK</span><span class="stat-val down" id="internal-tick">-450</span></div>
+                    <div class="stat-row"><span>$TICK</span><span class="stat-val down" id="internal-tick">OFFLINE</span></div>
                     <div class="stat-row"><span>Cumulative Delta</span><span class="stat-val" id="internal-delta">0</span></div>
-                    <div class="stat-row"><span>VWAP Bias</span><span class="stat-val up" id="internal-vwap">BULLISH</span></div>
+                    <div class="stat-row"><span>Trend Bias</span><span class="stat-val" id="internal-trend">NEUTRAL</span></div>
                     
+                    <div class="pane-header" style="margin-top:10px;"><span>Conviction Panel</span></div>
+                    <div class="stat-row"><span>Trend Strength (ADX)</span><span class="stat-val" id="stat-adx">25</span></div>
+                    <div class="stat-row"><span>Momentum (ROC)</span><span class="stat-val" id="stat-roc">0</span></div>
+                    <div class="stat-row"><span>Market State</span><span class="stat-val" id="stat-chop">CALM</span></div>
+
                     <div class="pane-header" style="margin-top:10px;"><span>Confluence Gauge</span></div>
                     <div style="padding: 15px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
                         <div id="confluence-score" style="font-size: 2rem; font-weight: 800; color: var(--accent);">0</div>
@@ -336,6 +343,10 @@
         let currentPrice = 0;
         const audio = new Audio('/public/sounds/alert.mp3');
 
+        if (Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+
         // --- Tabs ---
         function showTab(name) {
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -434,6 +445,34 @@
             if (data.news) updateNews(data.news);
             if (data.confluence) updateConfluence(data.confluence);
             if (data.positions) updatePositions(data.positions);
+
+            if (data.signals && data.signals.length > 0) {
+                data.signals.forEach(s => {
+                    if (s.setup) {
+                        if (Notification.permission === "granted") {
+                            new Notification("TRADE SETUP", { body: `${s.setup} @ ${s.entry.toFixed(2)}` });
+                        }
+                        audio.play().catch(() => {});
+                    }
+                });
+
+                const markers = data.signals.map(s => ({
+                    time: Math.floor(new Date().getTime() / 1000),
+                    position: s.side === 'BUY' ? 'belowBar' : 'aboveBar',
+                    color: s.side === 'BUY' ? '#23d18b' : '#ff4757',
+                    shape: s.side === 'BUY' ? 'arrowUp' : 'arrowDown',
+                    text: s.setup || s.type.replace('ALGO_', '')
+                }));
+                const existing = mainSeries.getMarkers() || [];
+                const merged = [...existing, ...markers].sort((a,b) => a.time - b.time).slice(-50);
+                mainSeries.setMarkers(merged);
+            }
+
+            if (data.schwabStatus) {
+                const s = document.getElementById('schwab-status');
+                s.textContent = `SCHWAB: ${data.schwabStatus}`;
+                s.style.color = data.schwabStatus === 'ACTIVE' ? 'var(--up)' : 'var(--down)';
+            }
         });
 
         socket.on('analytics', (data) => {
@@ -520,7 +559,7 @@
         }
 
         function updateStructure(struct) {
-            const el = document.getElementById('internal-vwap');
+            const el = document.getElementById('internal-trend');
             if (el) {
                 el.textContent = struct.trend.toUpperCase();
                 el.className = `stat-val ${struct.trend === 'Bullish' ? 'up' : (struct.trend === 'Bearish' ? 'down' : '')}`;
@@ -547,8 +586,26 @@
             document.getElementById('level-hod').textContent = ind.session.high.toFixed(2);
             document.getElementById('level-lod').textContent = ind.session.low.toFixed(2);
             if (ind.va.vah) {
+                updatePriceLine('vah', ind.va.vah, '#58a6ff', 'VAH');
+                updatePriceLine('val', ind.va.val, '#58a6ff', 'VAL');
+                updatePriceLine('poc', ind.va.poc, '#ff4757', 'POC');
                 document.getElementById('level-vah').textContent = ind.va.vah.toFixed(2);
                 document.getElementById('level-val').textContent = ind.va.val.toFixed(2);
+            }
+
+            if (ind.adx) {
+                document.getElementById('stat-adx').textContent = `${ind.adx.toFixed(1)} ${ind.adx > 25 ? '(STRONG)' : '(WEAK)'}`;
+            }
+            if (ind.roc !== undefined) {
+                document.getElementById('stat-roc').textContent = ind.roc.toFixed(2);
+                document.getElementById('stat-roc').className = `stat-val ${ind.roc > 0 ? 'up' : 'down'}`;
+            }
+            if (ind.chop) {
+                let state = 'CALM';
+                if (ind.chop > 61.8) state = 'CHOPPY';
+                else if (ind.chop < 38.2) state = 'TRENDING';
+                document.getElementById('stat-chop').textContent = state;
+                document.getElementById('stat-chop').className = `stat-val ${state === 'CHOPPY' ? 'down' : (state === 'TRENDING' ? 'up' : '')}`;
             }
 
             const ts = Math.floor(Date.now() / 1000);
@@ -559,15 +616,40 @@
             }
             if (ind.vwap) vwapSeries.update({ time: ts, value: ind.vwap });
 
+            if (ind.orb1 && ind.orb1.set) {
+                updatePriceLine('orb1h', ind.orb1.high, '#ff4757', 'ORB 1m H');
+                updatePriceLine('orb1l', ind.orb1.low, '#ff4757', 'ORB 1m L');
+            }
+            if (ind.orb5 && ind.orb5.set) {
+                updatePriceLine('orb5h', ind.orb5.high, '#23d18b', 'ORB 5m H');
+                updatePriceLine('orb5l', ind.orb5.low, '#23d18b', 'ORB 5m L');
+            }
             if (ind.orb15 && ind.orb15.set) {
                 updatePriceLine('orb15h', ind.orb15.high, '#f1c40f', 'ORB 15m H');
                 updatePriceLine('orb15l', ind.orb15.low, '#f1c40f', 'ORB 15m L');
             }
+            if (ind.asia && ind.asia.high) {
+                updatePriceLine('asiah', ind.asia.high, '#ffd700', 'Asia H');
+                updatePriceLine('asial', ind.asia.low, '#ffd700', 'Asia L');
+            }
+            if (ind.ib && ind.ib.set) {
+                updatePriceLine('ibh', ind.ib.high, '#ff4757', 'IB H');
+                updatePriceLine('ibl', ind.ib.low, '#ff4757', 'IB L');
+            }
         }
 
         function updateInternals(internals) {
-            if (internals.VIX) {
-                const vix = internals.VIX;
+            const statusEl = document.getElementById('finnhub-status');
+            if (internals.status) {
+                statusEl.textContent = `FINNHUB: ${internals.status}`;
+                statusEl.style.color = internals.status === 'ACTIVE' ? 'var(--up)' : 'var(--down)';
+            }
+
+            const data = internals.data;
+            if (!data) return;
+
+            if (data.VIX) {
+                const vix = data.VIX;
                 const el = document.getElementById('tick-vix');
                 if (el) {
                     el.textContent = vix.price.toFixed(2);
@@ -578,17 +660,37 @@
                     }
                 }
             }
-            if (internals.DXY) {
-                const dxy = internals.DXY;
+            if (data.DXY) {
+                const dxy = data.DXY;
                 const el = document.getElementById('tick-dxy');
                 if (el) el.textContent = dxy.price.toFixed(2);
+            }
+            if (data['$TICK']) {
+                const tick = data['$TICK'];
+                const el = document.getElementById('internal-tick');
+                if (el) {
+                    el.textContent = tick.price;
+                    el.className = `stat-val ${tick.price >= 0 ? 'up' : 'down'}`;
+                }
             }
         }
 
         function updateNews(news) {
             const container = document.getElementById('news-container');
-            if (!container || !news || news.length === 0) return;
-            container.innerHTML = news.map(n => `
+            if (!container) return;
+
+            if (news.status === 'ERROR') {
+                container.innerHTML = `<div style="padding: 10px; font-size: 0.75rem; color: var(--down); text-align: center;">News Error: ${news.error}</div>`;
+                return;
+            }
+
+            const data = news.data;
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div style="padding: 10px; font-size: 0.75rem; color: var(--text-dim); text-align: center;">No high impact news today</div>';
+                return;
+            }
+
+            container.innerHTML = data.map(n => `
                 <div style="padding: 10px; border-bottom: 1px solid #111; font-size: 0.75rem;">
                     <div style="color: var(--warn); font-weight: 800;">${n.time} - ${n.event}</div>
                     <div style="color: var(--text-dim); margin-top: 4px;">Impact: High | ${n.country}</div>
