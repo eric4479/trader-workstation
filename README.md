@@ -1,7 +1,7 @@
 # 🖥 Elite MNQ Trader Workstation
 
 A professional-grade, real-time trading terminal for **Micro E-mini Nasdaq-100 (MNQ)** futures.  
-Connects to **TopstepX (ProjectX)** for live market data, runs multi-algorithm signal detection, and surfaces everything through a dark-mode dashboard with WebSocket updates.
+Uses **Schwab** for market context when configured and **TopstepX (ProjectX)** for the live futures tick stream when credentials are available, runs multi-algorithm signal detection, and surfaces everything through a dark-mode dashboard with WebSocket updates.
 
 ---
 
@@ -40,6 +40,10 @@ The interactive launcher will install dependencies, set up the Python environmen
 Copy `.env.example` to `.env` and populate every field:
 
 ```dotenv
+# ── Data provider mode ──────────────────────────────────────
+# auto = Schwab context + TopstepX futures stream when credentials are available
+DATA_PROVIDER=auto
+
 # ── TopstepX / ProjectX ─────────────────────────────────────
 PROJECT_X_API_KEY=your_api_key_here        # From https://dashboard.projectx.com/
 PROJECT_X_USERNAME=your_username_here

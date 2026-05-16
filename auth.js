@@ -1,8 +1,23 @@
-const axios = require("axios");
-const { API_ENDPOINT, USERNAME, API_KEY } = require("./config");
+const axios = require('axios');
+const { API_ENDPOINT, USERNAME, API_KEY, TOPSTEP_ENABLED } = require('./config');
 
-async function getToken() {
-  console.log(`Authenticating as: ${USERNAME}`);
+function hasTopstepCredentials() {
+  return TOPSTEP_ENABLED;
+}
+
+async function getToken(options = {}) {
+  const { exitOnError = true } = options;
+
+  if (!hasTopstepCredentials()) {
+    const message = 'TopstepX credentials are not configured; live TopstepX stream disabled.';
+    if (exitOnError) {
+      console.error(message);
+      process.exit(1);
+    }
+    throw new Error(message);
+  }
+
+  console.log(`Authenticating TopstepX as: ${USERNAME}`);
   console.log(`Using API Key starting with: ${API_KEY.substring(0, 5)}...`);
   try {
     const res = await axios.post(
@@ -15,14 +30,23 @@ async function getToken() {
 
     if (res.data && res.data.token) {
       return res.data.token;
-    } else {
-      console.error("Auth failed: Token not found in response", res.data);
+    }
+
+    const message = `TopstepX auth failed: token not found in response ${JSON.stringify(res.data)}`;
+    if (exitOnError) {
+      console.error(message);
       process.exit(1);
     }
+    throw new Error(message);
   } catch (err) {
-    console.error("Auth failed:", err.response?.data || err.message);
-    process.exit(1);
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    const message = `TopstepX auth failed: ${detail}`;
+    if (exitOnError) {
+      console.error(message);
+      process.exit(1);
+    }
+    throw new Error(message);
   }
 }
 
-module.exports = { getToken };
+module.exports = { getToken, hasTopstepCredentials };

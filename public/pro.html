@@ -53,7 +53,11 @@
         .ticker-wrap { display: flex; gap: 20px; overflow: hidden; white-space: nowrap; flex: 1; }
         .ticker-item b { color: var(--accent); margin-right: 5px; }
         .market-status { color: var(--up); font-weight: 800; display: flex; align-items: center; gap: 6px; }
-        .market-status::before { content: ''; width: 8px; height: 8px; background: var(--up); border-radius: 50%; box-shadow: 0 0 5px var(--up); }
+        .market-status::before { content: ''; width: 8px; height: 8px; background: currentColor; border-radius: 50%; box-shadow: 0 0 5px currentColor; }
+        .provider-pill { border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; font-size: 0.65rem; color: var(--text-dim); }
+        .provider-pill.live { color: var(--up); border-color: rgba(35, 209, 139, 0.5); }
+        .provider-pill.warn { color: var(--warn); border-color: rgba(241, 196, 15, 0.5); }
+        .provider-pill.down { color: var(--down); border-color: rgba(255, 71, 87, 0.5); }
 
         /* --- Navigation Tabs --- */
         nav { 
@@ -150,6 +154,7 @@
         /* --- Utils --- */
         .up { color: var(--up); }
         .down { color: var(--down); }
+        .warn { color: var(--warn); }
         .btn { 
             padding: 10px; border: none; border-radius: 4px; font-weight: 800; 
             cursor: pointer; text-transform: uppercase; font-size: 0.75rem;
@@ -173,10 +178,10 @@
     </header>
 
     <nav>
-        <div class="tab active" onclick="showTab('command')">COMMAND CENTER</div>
-        <div class="tab" onclick="showTab('analytics')">ALPHA RANKING</div>
-        <div class="tab" onclick="showTab('risk')">RISK CONSOLE</div>
-        <div class="tab" onclick="showTab('scanner')">OPPORTUNITY SCAN</div>
+        <div class="tab active" onclick="showTab('command', this)">COMMAND CENTER</div>
+        <div class="tab" onclick="showTab('analytics', this)">ALPHA RANKING</div>
+        <div class="tab" onclick="showTab('risk', this)">RISK CONSOLE</div>
+        <div class="tab" onclick="showTab('scanner', this)">OPPORTUNITY SCAN</div>
         <div style="margin-left: auto; display: flex; align-items: center; gap: 15px;">
             <select id="tf-select" onchange="changeTF(this.value)" style="background:transparent; color:var(--text); border:1px solid var(--border); padding:4px; font-size:0.75rem;">
                 <option value="1m">1m</option>
@@ -333,7 +338,7 @@
     </main>
 
     <footer>
-        <div>SYSTEM STATUS: <span class="up">NOMINAL</span> | LATENCY: <span id="stat-latency">--</span>ms</div>
+        <div>SYSTEM STATUS: <span id="system-status" class="up">NOMINAL</span> | DATA: <span id="data-source-status">CHECKING</span> | LATENCY: <span id="stat-latency">--</span>ms</div>
         <div id="footer-time">2026-05-11 10:00:00 UTC</div>
     </footer>
 
@@ -341,18 +346,65 @@
         const socket = io();
         let currentTF = '15m';
         let currentPrice = 0;
-        const audio = new Audio('/public/sounds/alert.mp3');
+
+        function formatNumber(value, decimals = 2, fallback = '—') {
+            const n = Number(value);
+            return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
+        }
+
+        function updateProviderStatus(status) {
+            if (!status) return;
+            const topstep = status.topstepx || {};
+            const schwab = status.schwab || {};
+            const topstepEl = document.getElementById('provider-topstep');
+            const schwabEl = document.getElementById('provider-schwab');
+            const marketEl = document.getElementById('market-status');
+            const dataEl = document.getElementById('data-source-status');
+            const systemEl = document.getElementById('system-status');
+
+            const setPill = (el, label, provider) => {
+                if (!el) return;
+                const state = provider.connected ? 'LIVE' : (provider.enabled ? 'STANDBY' : 'OFF');
+                el.textContent = `${label}: ${state}`;
+                el.className = `provider-pill ${provider.connected ? 'live' : (provider.enabled ? 'warn' : 'down')}`;
+                el.title = provider.error || provider.lastTickAt || '';
+            };
+
+            setPill(topstepEl, 'TOPSTEP', topstep);
+            setPill(schwabEl, 'SCHWAB', schwab);
+            const live = topstep.connected || schwab.connected;
+            if (marketEl) {
+                marketEl.textContent = live ? 'LIVE DATA' : 'DATA STANDBY';
+                marketEl.style.color = live ? 'var(--up)' : 'var(--warn)';
+            }
+            if (dataEl) dataEl.textContent = `Topstep ${topstep.connected ? 'LIVE' : 'OFF'} / Schwab ${schwab.connected ? 'LIVE' : (schwab.enabled ? 'READY' : 'OFF')}`;
+            if (systemEl) {
+                systemEl.textContent = live ? 'NOMINAL' : 'STANDBY';
+                systemEl.className = live ? 'up' : 'warn';
+            }
+        }
+
+        async function loadHealth() {
+            try {
+                const res = await fetch('/api/health');
+                const data = await res.json();
+                updateProviderStatus(data.providers);
+            } catch (e) {
+                const el = document.getElementById('system-status');
+                if (el) { el.textContent = 'HEALTH API DOWN'; el.className = 'down'; }
+            }
+        }
 
         if (Notification.permission !== "denied") {
             Notification.requestPermission();
         }
 
         // --- Tabs ---
-        function showTab(name) {
+        function showTab(name, tabEl) {
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.getElementById(`tab-${name}`).classList.add('active');
-            event.currentTarget.classList.add('active');
+            if (tabEl) tabEl.classList.add('active');
             if (name === 'scanner') runScanner();
         }
 
@@ -474,6 +526,8 @@
                 s.style.color = data.schwabStatus === 'ACTIVE' ? 'var(--up)' : 'var(--down)';
             }
         });
+
+        socket.on('provider_status', updateProviderStatus);
 
         socket.on('analytics', (data) => {
             if (data.leaderboard) updateLeaderboard(data.leaderboard);
@@ -652,18 +706,27 @@
                 const vix = data.VIX;
                 const el = document.getElementById('tick-vix');
                 if (el) {
-                    el.textContent = vix.price.toFixed(2);
+                    el.textContent = formatNumber(vix.price);
                     const changeEl = el.nextElementSibling;
                     if (changeEl) {
                         changeEl.className = vix.change >= 0 ? 'up' : 'down';
-                        changeEl.textContent = `${vix.change >= 0 ? '+' : ''}${vix.change.toFixed(2)}%`;
+                        changeEl.textContent = `${vix.change >= 0 ? '+' : ''}${formatNumber(vix.change)}%`;
                     }
                 }
             }
             if (data.DXY) {
                 const dxy = data.DXY;
                 const el = document.getElementById('tick-dxy');
-                if (el) el.textContent = dxy.price.toFixed(2);
+                if (el) el.textContent = formatNumber(dxy.price);
+            }
+            if (internals.ES) {
+                const el = document.getElementById('tick-es');
+                if (el) el.textContent = formatNumber(internals.ES.price || internals.ES.last);
+            }
+            if (internals.NQ || internals.MNQ) {
+                const nq = internals.NQ || internals.MNQ;
+                const el = document.getElementById('tick-nq');
+                if (el) el.textContent = formatNumber(nq.price || nq.last);
             }
             if (data['$TICK']) {
                 const tick = data['$TICK'];
@@ -752,6 +815,8 @@
         }
 
         loadInitialData();
+        loadHealth();
+        setInterval(loadHealth, 30000);
         setInterval(() => {
             document.getElementById('footer-time').textContent = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
         }, 1000);

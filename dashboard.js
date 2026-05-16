@@ -60,7 +60,23 @@ function getSessionLevels() {
   };
 }
 
-function startDashboard(onReady) {
+function getDatabaseHealth() {
+  const candleRows = db.prepare(`
+    SELECT timeframe, COUNT(*) as count, MAX(timestamp) as latest
+    FROM candles
+    GROUP BY timeframe
+    ORDER BY timeframe
+  `).all();
+  const signalCount = db.prepare(`SELECT COUNT(*) as count FROM strategy_signals`).get().count;
+  const openOrderCount = db.prepare(`SELECT COUNT(*) as count FROM paper_orders WHERE status = 'OPEN'`).get().count;
+  return { path: DB_PATH, candles: candleRows, signals: signalCount, openOrders: openOrderCount };
+}
+
+function startDashboard(statusOrReady, maybeOnReady) {
+  const runtimeStatus = typeof statusOrReady === 'function' || !statusOrReady
+    ? { mode: 'dashboard', topstepx: { enabled: false, connected: false }, schwab: { enabled: false, connected: false } }
+    : statusOrReady;
+  const onReady = typeof statusOrReady === 'function' ? statusOrReady : maybeOnReady;
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server);
@@ -104,6 +120,16 @@ function startDashboard(onReady) {
       const stderr = err.stderr ? err.stderr.toString() : '';
       res.status(500).json({ success: false, error: err.message, stderr });
     }
+  });
+
+
+  app.get('/api/health', (req, res) => {
+    res.json({
+      ok: true,
+      now: new Date().toISOString(),
+      providers: runtimeStatus,
+      database: getDatabaseHealth()
+    });
   });
 
   app.get('/api/candles', (req, res) => {
@@ -188,6 +214,7 @@ function startDashboard(onReady) {
   });
 
   io.on('connection', (socket) => {
+    socket.emit('provider_status', runtimeStatus);
     socket.emit('levels', getSessionLevels());
     socket.emit('order_update', getPaperOrders());
     socket.emit('analytics', {
@@ -213,4 +240,4 @@ function startDashboard(onReady) {
   return io;
 }
 
-module.exports = { startDashboard };
+module.exports = { startDashboard, getDatabaseHealth };
