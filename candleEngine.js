@@ -24,7 +24,10 @@ const indicatorState = {
   asia: { high: null, low: null },
   ib: { high: null, low: null, set: false },
   market: { bid: null, bidSize: null, ask: null, askSize: null, high: null, low: null, volume: null },
-  cumDelta: 0
+  cumDelta: 0,
+  adx: 25,
+  chop: 50,
+  roc: 0
 };
 
 function calculateValueArea(profile) {

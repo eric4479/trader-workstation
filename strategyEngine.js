@@ -101,17 +101,60 @@ function runIndicators(bars) {
     stoch.update({ high: b.high, low: b.low, close: b.close });
   });
 
-  return {
-    rsi: rsi.isStable ? rsi.getResult().valueOf() : 50,
-    atr: atr.isStable ? atr.getResult().valueOf() : 0,
-    ema9: ema9.isStable ? ema9.getResult().valueOf() : null,
-    ema21: ema21.isStable ? ema21.getResult().valueOf() : null,
-    ema50: ema50.isStable ? ema50.getResult().valueOf() : null,
-    ema200: ema200.isStable ? ema200.getResult().valueOf() : null,
-    macd: macd.isStable ? macd.getResult() : { macd: 0, signal: 0, histogram: 0 },
-    bb: bb.isStable ? bb.getResult() : null,
-    stoch: stoch.isStable ? stoch.getResult() : null
-  };
+  const high = bars.map(b => b.high);
+  const low = bars.map(b => b.low);
+  const close = bars.map(b => b.close);
+
+  // Manual Choppiness Index (14 period)
+  let chop = 50;
+  if (bars.length >= 14) {
+    const n = 14;
+    const ATR1 = [];
+    for (let i = 1; i < bars.length; i++) {
+      ATR1.push(Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - bars[i-1].close), Math.abs(bars[i].low - bars[i-1].close)));
+    }
+    const sumATR1 = ATR1.slice(-n).reduce((a, b) => a + b, 0);
+    const maxHigh = Math.max(...high.slice(-n));
+    const minLow = Math.min(...low.slice(-n));
+    chop = 100 * Math.log10(sumATR1 / (maxHigh - minLow)) / Math.log10(n);
+  }
+
+  return new Promise((resolve) => {
+    talib.execute({
+      name: "ADX",
+      startIdx: 0,
+      endIdx: close.length - 1,
+      high: high, low: low, close: close,
+      optInTimePeriod: 14
+    }, (err, adxResult) => {
+      const adx = (adxResult && adxResult.result.outReal) ? adxResult.result.outReal[adxResult.result.outReal.length - 1] : 25;
+
+      talib.execute({
+        name: "ROC",
+        startIdx: 0,
+        endIdx: close.length - 1,
+        inReal: close,
+        optInTimePeriod: 10
+      }, (err, rocResult) => {
+        const roc = (rocResult && rocResult.result.outReal) ? rocResult.result.outReal[rocResult.result.outReal.length - 1] : 0;
+
+        resolve({
+          rsi: rsi.isStable ? rsi.getResult().valueOf() : 50,
+          atr: atr.isStable ? atr.getResult().valueOf() : 0,
+          ema9: ema9.isStable ? ema9.getResult().valueOf() : null,
+          ema21: ema21.isStable ? ema21.getResult().valueOf() : null,
+          ema50: ema50.isStable ? ema50.getResult().valueOf() : null,
+          ema200: ema200.isStable ? ema200.getResult().valueOf() : null,
+          macd: macd.isStable ? macd.getResult() : { macd: 0, signal: 0, histogram: 0 },
+          bb: bb.isStable ? bb.getResult() : null,
+          stoch: stoch.isStable ? stoch.getResult() : null,
+          adx: adx,
+          roc: roc,
+          chop: chop
+        });
+      });
+    });
+  });
 }
 
 async function getAlgorithms(currentPrice, ind, orb, vwap, bars, session = {}, priorDay = {}) {
@@ -276,17 +319,20 @@ async function getSignals(currentPrice, bars, indicators, vwap, internals = null
   if (!bars || bars.length === 0) return { signals: [], structure: null, indicators: null };
 
   const structure = getMarketStructure(bars);
-  const ind = runIndicators(bars);
+  const ind = await runIndicators(bars);
   // We use the full session object now
   const rawSignals = await getAlgorithms(currentPrice, ind, null, vwap, bars, session, priorDay);
 
   // Macro Confirmation Logic
-  const isVixSpiking = internals && internals.VIX && internals.VIX.price > 20;
+  const vixData = internals && internals.data && internals.data.VIX ? internals.data.VIX : (internals && internals.VIX ? internals.VIX : null);
+  const isVixSpiking = vixData && vixData.price > 20;
 
   // Format and Filter the signals
   const finalSignals = rawSignals.filter(s => {
     // Block BUYS if VIX is high (Extreme fear)
     if (s.side === 'BUY' && isVixSpiking) return false;
+    // Block Trend following if Choppiness is high
+    if (s.algo.includes('BREAKOUT') && ind.chop > 61.8) return false;
     return true;
   }).map(s => {
     const isBuy = s.side === 'BUY';
@@ -297,7 +343,20 @@ async function getSignals(currentPrice, bars, indicators, vwap, internals = null
     let baseScore = 40;
     if (s.algo === 'ALGO_SESSION_EDGE' || s.algo === 'ALGO_VALUE_AREA_REENTRY' || s.algo === 'ALGO_DELTA_DIVERGENCE') baseScore = 60;
     
-    const score = Math.min(100, baseScore + (s.reasons.length * 20));
+    let score = baseScore + (s.reasons.length * 10);
+
+    // Adjust score based on Trend Strength (ADX)
+    if (ind.adx > 25) score += 10;
+    if (ind.adx > 40) score += 10;
+
+    // Adjust score based on Momentum (ROC)
+    if (s.side === 'BUY' && ind.roc > 0) score += 10;
+    if (s.side === 'SELL' && ind.roc < 0) score += 10;
+
+    // Adjust score based on Choppiness (Avoid trend signals in chop)
+    if (ind.chop < 38.2) score += 10; // Trending
+
+    score = Math.min(100, score);
 
     let target = t2;
     // Specific target for 80% rule
@@ -305,11 +364,26 @@ async function getSignals(currentPrice, bars, indicators, vwap, internals = null
        target = s.side === 'BUY' ? priorDay.vah : priorDay.val;
     }
 
+    // Detect High Confluence Trade Setups
+    let setup = null;
+    if (score >= 80) {
+      if (s.algo.includes('BREAKOUT') && ind.adx > 30) {
+        setup = `STRONG ${s.side} BREAKOUT`;
+      } else if (s.algo.includes('MEAN_REVERSION')) {
+        setup = `HIGH PROBABILITY ${s.side} REVERSAL`;
+      } else if (s.algo === 'ALGO_TREND_PULLBACK') {
+        setup = `${s.side} TREND CONTINUATION`;
+      } else {
+        setup = `HIGH CONFLUENCE ${s.side} SETUP`;
+      }
+    }
+
     return {
       type: s.algo,
       side: s.side,
       reasons: s.reasons,
       score: score, 
+      setup: setup,
       entry: currentPrice,
       target1: t1,
       target2: t2,

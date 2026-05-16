@@ -206,7 +206,6 @@ The dashboard server exposes a REST API at `http://localhost:3000`:
 | `/api/candles?tf=1m&limit=500` | GET | OHLCV candles for charting |
 | `/api/signals?limit=50` | GET | Recent strategy signals |
 | `/api/analytics` | GET | Leaderboard stats + daily P&L |
-| `/api/health` | GET | Provider status, database path, candle counts, signal/order counts |
 | `/api/backtest?symbols=CON.F.US.MNQ.M26&or=15&target=20&stop=10` | GET | Run ORB backtests and return EV/Kelly-ranked results |
 | `/api/paper/orders` | GET | All paper trade orders |
 | `/api/paper/order` | POST | Place a paper trade manually |

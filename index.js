@@ -70,37 +70,106 @@ async function refreshSupplementalContext() {
     globalInternals = { ...globalInternals, ...internals };
   }
 
-  const news = await getEconomicCalendar();
-  if (Array.isArray(news)) {
-    highImpactNews = news;
+  let globalInternals = { status: 'INITIALIZING', data: {} };
+  let highImpactNews = { status: 'INITIALIZING', data: [] };
+  let schwabStatus = 'OFFLINE';
+
+  if (schwab.hasCredentials()) {
+    schwabStatus = 'CONNECTING';
+    schwab.start((service, symbol, data) => {
+      schwabStatus = 'ACTIVE';
+      if (!globalInternals.data[symbol]) globalInternals.data[symbol] = {};
+      const s = globalInternals.data[symbol];
+      if (data.last      !== undefined) s.price      = data.last;
+      if (data.bid       !== undefined) s.bid        = data.bid;
+      if (data.ask       !== undefined) s.ask        = data.ask;
+      if (data.high      !== undefined) s.high       = data.high;
+      if (data.low       !== undefined) s.low        = data.low;
+      if (data.open      !== undefined) s.open       = data.open;
+      if (data.volume    !== undefined) s.volume     = data.volume;
+      if (data.netChange !== undefined) s.netChange  = data.netChange;
+      if (data.netChangePct !== undefined) s.change  = data.netChangePct;
+    });
   }
-}
 
-function evaluatePendingSignals(price) {
-  let closedCount = 0;
-  let lossCount = 0;
-  const pending = getPendingSignals(CONTRACT_ID);
+  (async () => {
+    console.log("🚀 Starting TopstepX Engine…");
+    const token = await getToken();
+    console.log("✅ Authenticated");
 
-  pending.forEach(sig => {
-    let status = null;
-    if (sig.side === 'BUY') {
-      if (price >= sig.target) status = 'WIN';
-      else if (price <= sig.stop) status = 'LOSS';
-    } else {
-      if (price <= sig.target) status = 'WIN';
-      else if (price >= sig.stop) status = 'LOSS';
-    }
+    const io = startDashboard();
+    
+    // Poll Market Internals & News every 60s
+    setInterval(async () => {
+      const internals = await getMarketInternals();
+      if (internals && internals.status === 'ACTIVE') {
+        globalInternals.status = 'ACTIVE';
+        Object.assign(globalInternals.data, internals.data);
+      } else if (internals) {
+        globalInternals.status = internals.status;
+      }
 
-    if (status) {
-      setSignalStatus(sig.id, status);
-      closedCount += 1;
-      if (status === 'LOSS') lossCount += 1;
-      console.log(`\n${status === 'WIN' ? '✅' : '⚠️'} Signal ${status} recorded for ${sig.algo_name}`);
-    }
-  });
+      const news = await getEconomicCalendar();
+      if (news) highImpactNews = news;
+    }, 60000);
 
-  return { closedCount, lossCount };
-}
+    // Initial fetch
+    getMarketInternals().then(data => { if (data) globalInternals = data; });
+    getEconomicCalendar().then(data => { if (data) highImpactNews = data; });
+
+    // Risk Management State
+    let lastSignalTimePerAlgo = {}; 
+    let consecutiveLosses = 0;
+    const MAX_CONSECUTIVE_LOSSES = 3;
+    const DAILY_DRAWDOWN_LIMIT = -1000; // Mock: $1000 loss limit for MNQ (approx 2% of $50k)
+
+    // Fetch initial static day levels
+    const priorDayLevels = getPriorDayLevels(CONTRACT_ID);
+    let currentPrice = 0;
+    let lastStatSave = 0;
+    let currentDom = { bids: [], asks: [] };
+
+    await startStream(token, async (update) => {
+      // DOM depth updates — store and re-emit with next quote/trade
+      if (update.type === 'depth') {
+        currentDom = update.dom;
+        io.emit('depth', update.dom);
+        return;
+      }
+
+      // 0. Update Dashboard common stats regardless of type
+      if (update.type === 'quote') {
+        io.emit('tick', {
+          type: update.type,
+          price: currentPrice, // last known
+          bid: update.bid,
+          ask: update.ask,
+          indicators: update.indicators,
+          dailyPnL: getDailyPnL(CONTRACT_ID),
+          internals: globalInternals,
+          news: highImpactNews,
+          schwabStatus: schwabStatus,
+          dom: currentDom
+        });
+        return;
+      }
+
+      // Handle 'trade' type
+      const { price, size, ts, bars, tickBars, indicators } = update;
+      currentPrice = price;
+      process.stdout.write(`\r[${new Date().toLocaleTimeString()}] Price: ${price.toFixed(2)} Size: ${size}   `);
+
+      // 1. Evaluate PENDING signals & Update Risk State
+      const pending = getPendingSignals(CONTRACT_ID);
+      pending.forEach(sig => {
+        let status = null;
+        if (sig.side === 'BUY') {
+          if (price >= sig.target) status = 'WIN';
+          else if (price <= sig.stop) status = 'LOSS';
+        } else {
+          if (price <= sig.target) status = 'WIN';
+          else if (price >= sig.stop) status = 'LOSS';
+        }
 
 function evaluateOpenPaperOrders(price) {
   const openOrders = getOpenPaperOrders(CONTRACT_ID);
@@ -229,44 +298,25 @@ async function main() {
           stop: s.stop,
           reasons: s.reasons
         });
-        lastSignalTimePerAlgo[s.type] = now;
-        console.log(`\n🚀 ${s.type} ${s.side} Signal Fired @ ${price}`);
+        lastStatSave = now;
+      }
 
-        if (s.score >= 75) {
-          savePaperOrder({
-            symbol: CONTRACT_ID,
-            side: s.side,
-            price,
-            quantity: 1,
-            signal_id: dbResult.lastInsertRowid,
-            stop_loss: s.stop,
-            take_profit: s.target
-          });
-          console.log(`\n💼 AUTO-TRADE: Opened ${s.side} position for ${s.type} (Score: ${s.score})`);
-        }
-      });
-    }
-
-    const algoStats = getAlgoStats(CONTRACT_ID);
-    const algoDetailed = getAlgoStatsDetailed(CONTRACT_ID);
-
-    if (now - lastStatSave > 300000) {
-      saveSessionStats({
-        symbol: CONTRACT_ID,
-        date: new Date().toISOString().split('T')[0],
-        vah: indicators.va.vah,
-        val: indicators.va.val,
-        poc: indicators.va.poc,
-        asia_high: indicators.asia.high,
-        asia_low: indicators.asia.low,
-        ib_high: indicators.ib.high,
-        ib_low: indicators.ib.low,
-        orb1_high: indicators.orb1.high,
-        orb1_low: indicators.orb1.low,
-        orb5_high: indicators.orb5.high,
-        orb5_low: indicators.orb5.low,
-        orb15_high: indicators.orb15.high,
-        orb15_low: indicators.orb15.low
+      // Push to dashboard
+      io.emit('tick', { 
+        type: 'trade',
+        price, size, ts, bars, tickBars, 
+        indicators: { ...indicators, ...result.indicators, adx: result.indicators.adx, chop: result.indicators.chop, roc: result.indicators.roc },
+        signals: result.signals, 
+        confluence: result.confluence,
+        structure: result.structure,
+        priorDay: priorDayLevels,
+        leaderboard: algoStats,
+        leaderboardDetailed: algoDetailed,
+        dailyPnL,
+        internals: globalInternals,
+        news: highImpactNews,
+        schwabStatus: schwabStatus,
+        positions: openOrders
       });
       lastStatSave = now;
     }

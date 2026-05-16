@@ -13,13 +13,16 @@ const SYMBOLS = {
 };
 
 async function getMarketInternals() {
-  if (!FINNHUB_KEY) return null;
+  if (!FINNHUB_KEY) return { status: 'OFFLINE', data: null };
   
-  const results = {};
+  const results = { status: 'ACTIVE', data: {} };
   try {
     const promises = Object.entries(SYMBOLS).map(async ([name, symbol]) => {
       const res = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_KEY}`);
-      results[name] = {
+      if (!res.data || res.data.c === 0) {
+        throw new Error(`Invalid data for ${symbol}`);
+      }
+      results.data[name] = {
         price: res.data.c,
         change: res.data.dp,
         high: res.data.h,
@@ -31,17 +34,21 @@ async function getMarketInternals() {
     return results;
   } catch (err) {
     console.error('[INTERNALS] Error fetching market data:', err.message);
-    return null;
+    return { status: 'ERROR', data: null, error: err.message };
   }
 }
 
 async function getEconomicCalendar() {
-  if (!FINNHUB_KEY) return [];
+  if (!FINNHUB_KEY) return { status: 'OFFLINE', data: [] };
   
   try {
     const today = DateTime.now().toISODate();
     const res = await axios.get(`https://finnhub.io/api/v1/calendar/economic?from=${today}&to=${today}&token=${FINNHUB_KEY}`);
     
+    if (!res.data || !res.data.economicCalendar) {
+       return { status: 'ACTIVE', data: [] };
+    }
+
     // Filter for high impact news (impact: 'high')
     const highImpact = res.data.economicCalendar
       .filter(event => event.impact === 'high')
@@ -53,10 +60,10 @@ async function getEconomicCalendar() {
         estimate: event.estimate
       }));
       
-    return highImpact;
+    return { status: 'ACTIVE', data: highImpact };
   } catch (err) {
     console.error('[CALENDAR] Error fetching news:', err.message);
-    return [];
+    return { status: 'ERROR', data: [], error: err.message };
   }
 }
 

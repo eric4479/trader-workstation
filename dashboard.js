@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { db, DB_PATH, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
+const { db, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
 const { runBacktest } = require('./backtestEngine');
 const { CONTRACT_ID } = require('./config');
 
@@ -82,11 +82,11 @@ function startDashboard(statusOrReady, maybeOnReady) {
   const io = new Server(server);
 
   app.use(express.json());
-  app.use(express.static(path.join(__dirname)));
-
   app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public/pro.html'));
   });
+
+  app.use(express.static(path.join(__dirname)));
 
   app.get('/v1', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));

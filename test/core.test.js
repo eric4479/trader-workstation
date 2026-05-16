@@ -11,20 +11,12 @@ const database = require('../database');
 const { getSignals } = require('../strategyEngine');
 const schwab = require('../schwabConnector');
 const { inferPointValue, runOrbBacktest, runBacktest } = require('../backtestEngine');
-const { hasTopstepCredentials } = require('../auth');
-const { getDatabaseHealth } = require('../dashboard');
+const { findConflictMarkers } = require('../scripts/checkConflicts');
 
 
-test('TopstepX is optional when credentials are not configured', () => {
-  assert.equal(hasTopstepCredentials(), false);
-});
-
-test('dashboard database health reports path and table counts', () => {
-  const health = getDatabaseHealth();
-  assert.equal(health.path, process.env.TRADING_DB_PATH);
-  assert.ok(Array.isArray(health.candles));
-  assert.equal(typeof health.signals, 'number');
-  assert.equal(typeof health.openOrders, 'number');
+test('repository has no unresolved merge conflict markers', () => {
+  const conflicts = findConflictMarkers(path.resolve(__dirname, '..'));
+  assert.deepEqual(conflicts, []);
 });
 
 test('database uses an explicit, absolute path and creates core tables', () => {
