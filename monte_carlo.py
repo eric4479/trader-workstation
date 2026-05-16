@@ -3,8 +3,9 @@ import pandas as pd
 import numpy as np
 import random
 import os
+from pathlib import Path
 
-DB_PATH = 'trading_data.db'
+DB_PATH = os.environ.get('TRADING_DB_PATH', str(Path(__file__).resolve().with_name('trading_data.db')))
 
 def run_simulation(iterations=10000, account_size=50000, risk_per_trade=0.01):
     """

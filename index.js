@@ -1,225 +1,300 @@
-const { getToken } = require("./auth");
-  const { startStream } = require("./stream");
-  const { startDashboard } = require("./dashboard");
-  const { getSignals } = require("./strategyEngine");
-  const { getRecentBars } = require("./candleEngine");
-  const { getPriorDayLevels, saveSignal, getPendingSignals, setSignalStatus, getAlgoStats, getAlgoStatsDetailed, getDailyPnL, cleanupOldData, saveSessionStats, savePaperOrder, updatePaperOrder, getOpenPaperOrders } = require("./database");
-  const { CONTRACT_ID } = require("./config");
-  const { getMarketInternals, getEconomicCalendar } = require("./marketInternals");
-  const schwab = require('./schwabConnector');
-  
-  // Cleanup old data on startup (7 days)
-  cleanupOldData(7);
+const { getToken, hasTopstepCredentials } = require('./auth');
+const { startStream } = require('./stream');
+const { startDashboard } = require('./dashboard');
+const { getSignals } = require('./strategyEngine');
+const { getRecentBars } = require('./candleEngine');
+const {
+  getPriorDayLevels,
+  saveSignal,
+  getPendingSignals,
+  setSignalStatus,
+  getAlgoStats,
+  getAlgoStatsDetailed,
+  getDailyPnL,
+  cleanupOldData,
+  saveSessionStats,
+  savePaperOrder,
+  updatePaperOrder,
+  getOpenPaperOrders
+} = require('./database');
+const { CONTRACT_ID, DATA_PROVIDER, SCHWAB_ENABLED } = require('./config');
+const { getMarketInternals, getEconomicCalendar } = require('./marketInternals');
+const schwab = require('./schwabConnector');
 
-  let globalInternals = {};
-  let highImpactNews = [];
+const runtimeStatus = {
+  mode: DATA_PROVIDER,
+  topstepx: { enabled: hasTopstepCredentials(), connected: false, lastTickAt: null, error: null },
+  schwab: { enabled: SCHWAB_ENABLED && schwab.hasCredentials(), connected: false, lastTickAt: null, error: null },
+  startedAt: new Date().toISOString()
+};
 
-  // Start Schwab Macro Stream (Real-time)
-  // Callback receives (service, symbol, decodedData) where decodedData has named fields.
-  schwab.start((service, symbol, data) => {
-    if (!globalInternals[symbol]) globalInternals[symbol] = {};
-    const s = globalInternals[symbol];
-    if (data.last      !== undefined) s.price      = data.last;
-    if (data.bid       !== undefined) s.bid        = data.bid;
-    if (data.ask       !== undefined) s.ask        = data.ask;
-    if (data.high      !== undefined) s.high       = data.high;
-    if (data.low       !== undefined) s.low        = data.low;
-    if (data.open      !== undefined) s.open       = data.open;
-    if (data.volume    !== undefined) s.volume     = data.volume;
-    if (data.netChange !== undefined) s.netChange  = data.netChange;
-    if (data.netChangePct !== undefined) s.change  = data.netChangePct;
+let globalInternals = {};
+let highImpactNews = [];
+
+function normalizeContextSymbol(symbol) {
+  const map = {
+    '$VIX.X': 'VIX',
+    '/ES': 'ES',
+    '/NQ': 'NQ',
+    '/MNQ': 'MNQ',
+    '/MES': 'MES',
+    UUP: 'DXY'
+  };
+  return map[symbol] || String(symbol || '').replace(/^[/$]/, '');
+}
+
+function mergeMarketContext(symbol, data = {}) {
+  const key = normalizeContextSymbol(symbol);
+  if (!key) return;
+  if (!globalInternals[key]) globalInternals[key] = {};
+  const s = globalInternals[key];
+  if (data.last !== undefined) s.price = data.last;
+  if (data.mark !== undefined && s.price === undefined) s.price = data.mark;
+  if (data.bid !== undefined) s.bid = data.bid;
+  if (data.ask !== undefined) s.ask = data.ask;
+  if (data.high !== undefined) s.high = data.high;
+  if (data.low !== undefined) s.low = data.low;
+  if (data.open !== undefined) s.open = data.open;
+  if (data.volume !== undefined) s.volume = data.volume;
+  if (data.netChange !== undefined) s.netChange = data.netChange;
+  if (data.netChangePct !== undefined) s.change = data.netChangePct;
+  s.source = 'schwab';
+  s.updatedAt = new Date().toISOString();
+  runtimeStatus.schwab.connected = schwab.isConnected;
+  runtimeStatus.schwab.lastTickAt = s.updatedAt;
+}
+
+async function refreshSupplementalContext() {
+  const internals = await getMarketInternals();
+  if (internals) {
+    globalInternals = { ...globalInternals, ...internals };
+  }
+
+  const news = await getEconomicCalendar();
+  if (Array.isArray(news)) {
+    highImpactNews = news;
+  }
+}
+
+function evaluatePendingSignals(price) {
+  let closedCount = 0;
+  let lossCount = 0;
+  const pending = getPendingSignals(CONTRACT_ID);
+
+  pending.forEach(sig => {
+    let status = null;
+    if (sig.side === 'BUY') {
+      if (price >= sig.target) status = 'WIN';
+      else if (price <= sig.stop) status = 'LOSS';
+    } else {
+      if (price <= sig.target) status = 'WIN';
+      else if (price >= sig.stop) status = 'LOSS';
+    }
+
+    if (status) {
+      setSignalStatus(sig.id, status);
+      closedCount += 1;
+      if (status === 'LOSS') lossCount += 1;
+      console.log(`\n${status === 'WIN' ? '✅' : '⚠️'} Signal ${status} recorded for ${sig.algo_name}`);
+    }
   });
 
-  (async () => {
-    console.log("🚀 Starting TopstepX Engine…");
-    const token = await getToken();
-    console.log("✅ Authenticated");
+  return { closedCount, lossCount };
+}
 
-    const io = startDashboard();
-    
-    // Poll Market Internals & News every 60s
-    setInterval(async () => {
-      globalInternals = await getMarketInternals() || globalInternals;
-      highImpactNews = await getEconomicCalendar() || highImpactNews;
-    }, 60000);
+function evaluateOpenPaperOrders(price) {
+  const openOrders = getOpenPaperOrders(CONTRACT_ID);
+  openOrders.forEach(order => {
+    let status = null;
+    if (order.side === 'BUY') {
+      if (price >= order.take_profit) status = 'WIN';
+      else if (price <= order.stop_loss) status = 'LOSS';
+    } else {
+      if (price <= order.take_profit) status = 'WIN';
+      else if (price >= order.stop_loss) status = 'LOSS';
+    }
 
-    // Initial fetch
-    getMarketInternals().then(data => globalInternals = data);
-    getEconomicCalendar().then(data => highImpactNews = data);
+    if (status) {
+      updatePaperOrder(order.id, status, price);
+      console.log(`\n📦 Paper Order ${order.id} closed: ${status} @ ${price}`);
+    }
+  });
+}
 
-    // Risk Management State
-    let lastSignalTimePerAlgo = {}; 
-    let consecutiveLosses = 0;
-    const MAX_CONSECUTIVE_LOSSES = 3;
-    const DAILY_DRAWDOWN_LIMIT = -1000; // Mock: $1000 loss limit for MNQ (approx 2% of $50k)
+async function main() {
+  console.log(`🚀 Starting Trader Workstation (${DATA_PROVIDER} mode)…`);
+  cleanupOldData(7);
 
-    // Fetch initial static day levels
-    const priorDayLevels = getPriorDayLevels(CONTRACT_ID);
-    let currentPrice = 0;
-    let lastStatSave = 0;
-    let currentDom = { bids: [], asks: [] };
+  const io = startDashboard(runtimeStatus);
+  refreshSupplementalContext().catch(err => console.error('[CONTEXT] Initial refresh failed:', err.message));
+  setInterval(() => {
+    refreshSupplementalContext().catch(err => console.error('[CONTEXT] Refresh failed:', err.message));
+  }, 60000);
 
-    await startStream(token, async (update) => {
-      // DOM depth updates — store and re-emit with next quote/trade
-      if (update.type === 'depth') {
-        currentDom = update.dom;
-        io.emit('depth', update.dom);
-        return;
-      }
+  if (SCHWAB_ENABLED) {
+    schwab.start((service, symbol, data) => mergeMarketContext(symbol, data));
+  }
 
-      // 0. Update Dashboard common stats regardless of type
-      if (update.type === 'quote') {
-        io.emit('tick', {
-          type: update.type,
-          price: currentPrice, // last known
-          bid: update.bid,
-          ask: update.ask,
-          indicators: update.indicators,
-          dailyPnL: getDailyPnL(CONTRACT_ID),
-          internals: globalInternals,
-          news: highImpactNews,
-          dom: currentDom
-        });
-        return;
-      }
+  if (!hasTopstepCredentials()) {
+    runtimeStatus.topstepx.enabled = false;
+    runtimeStatus.topstepx.error = 'TopstepX credentials not configured; dashboard and Schwab context remain available.';
+    io.emit('provider_status', runtimeStatus);
+    console.warn(`[TOPSTEPX] ${runtimeStatus.topstepx.error}`);
+    return;
+  }
 
-      // Handle 'trade' type
-      const { price, size, ts, bars, tickBars, indicators } = update;
-      currentPrice = price;
-      process.stdout.write(`\r[${new Date().toLocaleTimeString()}] Price: ${price.toFixed(2)} Size: ${size}   `);
+  let token;
+  try {
+    token = await getToken({ exitOnError: false });
+    runtimeStatus.topstepx.connected = true;
+    runtimeStatus.topstepx.error = null;
+    console.log('✅ TopstepX authenticated');
+  } catch (err) {
+    runtimeStatus.topstepx.connected = false;
+    runtimeStatus.topstepx.error = err.message;
+    io.emit('provider_status', runtimeStatus);
+    console.error(`[TOPSTEPX] ${err.message}`);
+    return;
+  }
 
-      // 1. Evaluate PENDING signals & Update Risk State
-      const pending = getPendingSignals(CONTRACT_ID);
-      pending.forEach(sig => {
-        let status = null;
-        if (sig.side === 'BUY') {
-          if (price >= sig.target) status = 'WIN';
-          else if (price <= sig.stop) status = 'LOSS';
-        } else {
-          if (price <= sig.target) status = 'WIN';
-          else if (price >= sig.stop) status = 'LOSS';
-        }
+  let lastSignalTimePerAlgo = {};
+  let consecutiveLosses = 0;
+  const MAX_CONSECUTIVE_LOSSES = 3;
+  const DAILY_DRAWDOWN_LIMIT = -1000;
+  const priorDayLevels = getPriorDayLevels(CONTRACT_ID);
+  let currentPrice = 0;
+  let lastStatSave = 0;
+  let currentDom = { bids: [], asks: [] };
 
-        if (status) {
-          setSignalStatus(sig.id, status);
-          if (status === 'LOSS') {
-            consecutiveLosses++;
-            console.log(`\n⚠️ Signal LOSS recorded. Consecutive: ${consecutiveLosses}`);
-          } else {
-            consecutiveLosses = 0;
-            console.log(`\n✅ Signal WIN recorded. Circuit breaker reset.`);
-          }
-        }
-      });
+  await startStream(token, async (update) => {
+    if (update.type === 'depth') {
+      currentDom = update.dom;
+      io.emit('depth', update.dom);
+      return;
+    }
 
-      // 1.1 Track Open Paper Orders
-      const openOrders = getOpenPaperOrders(CONTRACT_ID);
-      openOrders.forEach(order => {
-        let status = null;
-        if (order.side === 'BUY') {
-          if (price >= order.take_profit) status = 'WIN';
-          else if (price <= order.stop_loss) status = 'LOSS';
-        } else {
-          if (price <= order.take_profit) status = 'WIN';
-          else if (price >= order.stop_loss) status = 'LOSS';
-        }
+    runtimeStatus.topstepx.connected = true;
+    runtimeStatus.topstepx.lastTickAt = new Date().toISOString();
+    runtimeStatus.topstepx.error = null;
 
-        if (status) {
-          updatePaperOrder(order.id, status, price);
-          console.log(`\n📦 Paper Order ${order.id} closed: ${status} @ ${price}`);
-        }
-      });
-
-      // 2. Risk Checks (Circuit Breakers)
-      const dailyPnL = getDailyPnL(CONTRACT_ID);
-      const isCircuitBroken = consecutiveLosses >= MAX_CONSECUTIVE_LOSSES || dailyPnL.pnl <= DAILY_DRAWDOWN_LIMIT;
-
-      if (isCircuitBroken) {
-        process.stdout.write(`\r[HALTED] Risk limit reached. PnL: $${dailyPnL.pnl} | Losses: ${consecutiveLosses}   `);
-      }
-
-      // 3. Strategy Processing
-      const history = getRecentBars(CONTRACT_ID, '1m', 250);
-      const result = await getSignals(price, history, indicators, indicators.vwap, globalInternals, indicators, priorDayLevels);
-
-      // Save new signals and AUTOMATE Paper Trades
-      const now = Date.now();
-      if (!isCircuitBroken && result.signals.length > 0) {
-        result.signals.forEach(s => {
-          const lastTime = lastSignalTimePerAlgo[s.type] || 0;
-          if (now - lastTime > 300000) { // 5-minute cooldown per specific algo
-            const dbResult = saveSignal({
-              symbol: CONTRACT_ID,
-              algo_name: s.type,
-              side: s.side,
-              entry_price: price,
-              target1: s.target1,
-              target2: s.target2,
-              target: s.target,
-              stop: s.stop,
-              reasons: s.reasons
-            });
-            lastSignalTimePerAlgo[s.type] = now;
-            console.log(`\n🚀 ${s.type} ${s.side} Signal Fired @ ${price}`);
-
-            // Automated Paper Execution for High Confluence signals
-            if (s.score >= 75) {
-              savePaperOrder({
-                symbol: CONTRACT_ID,
-                side: s.side,
-                price: price,
-                quantity: 1, // 1 micro contract
-                signal_id: dbResult.lastInsertRowid,
-                stop_loss: s.stop,
-                take_profit: s.target
-              });
-              console.log(`\n💼 AUTO-TRADE: Opened ${s.side} position for ${s.type} (Score: ${s.score})`);
-            }
-          }
-        });
-      }
-
-      // Fetch Live Algo Stats for the Leaderboard
-      const algoStats = getAlgoStats(CONTRACT_ID);
-      const algoDetailed = getAlgoStatsDetailed(CONTRACT_ID);
-
-      // 4. Persistence: Save Session Stats every 5 minutes
-      if (now - lastStatSave > 300000) {
-        saveSessionStats({
-          symbol: CONTRACT_ID,
-          date: new Date().toISOString().split('T')[0],
-          vah: indicators.va.vah,
-          val: indicators.va.val,
-          poc: indicators.va.poc,
-          asia_high: indicators.asia.high,
-          asia_low: indicators.asia.low,
-          ib_high: indicators.ib.high,
-          ib_low: indicators.ib.low,
-          orb1_high: indicators.orb1.high,
-          orb1_low: indicators.orb1.low,
-          orb5_high: indicators.orb5.high,
-          orb5_low: indicators.orb5.low,
-          orb15_high: indicators.orb15.high,
-          orb15_low: indicators.orb15.low
-        });
-        lastStatSave = now;
-      }
-
-      // Push to dashboard
-      io.emit('tick', { 
-        type: 'trade',
-        price, size, ts, bars, tickBars, 
-        indicators: { ...indicators, ...result.indicators }, 
-        signals: result.signals, 
-        confluence: result.confluence,
-        structure: result.structure,
-        priorDay: priorDayLevels,
-        leaderboard: algoStats,
-        leaderboardDetailed: algoDetailed,
-        dailyPnL,
+    if (update.type === 'quote') {
+      io.emit('tick', {
+        type: update.type,
+        price: currentPrice,
+        bid: update.bid,
+        ask: update.ask,
+        indicators: update.indicators,
+        dailyPnL: getDailyPnL(CONTRACT_ID),
         internals: globalInternals,
         news: highImpactNews,
-        positions: openOrders
+        dom: currentDom,
+        providerStatus: runtimeStatus
       });
+      return;
+    }
+
+    const { price, size, ts, bars, tickBars, indicators } = update;
+    currentPrice = price;
+    process.stdout.write(`\r[${new Date().toLocaleTimeString()}] Price: ${price.toFixed(2)} Size: ${size}   `);
+
+    const signalResult = evaluatePendingSignals(price);
+    if (signalResult.closedCount > 0) {
+      consecutiveLosses = signalResult.lossCount > 0 ? consecutiveLosses + signalResult.lossCount : 0;
+    }
+    evaluateOpenPaperOrders(price);
+
+    const dailyPnL = getDailyPnL(CONTRACT_ID);
+    const isCircuitBroken = consecutiveLosses >= MAX_CONSECUTIVE_LOSSES || dailyPnL.pnl <= DAILY_DRAWDOWN_LIMIT;
+    if (isCircuitBroken) {
+      process.stdout.write(`\r[HALTED] Risk limit reached. PnL: $${dailyPnL.pnl} | Losses: ${consecutiveLosses}   `);
+    }
+
+    const history = getRecentBars(CONTRACT_ID, '1m', 250);
+    const result = await getSignals(price, history, indicators, indicators.vwap, globalInternals, indicators, priorDayLevels);
+
+    const now = Date.now();
+    if (!isCircuitBroken && result.signals.length > 0) {
+      result.signals.forEach(s => {
+        const lastTime = lastSignalTimePerAlgo[s.type] || 0;
+        if (now - lastTime <= 300000) return;
+
+        const dbResult = saveSignal({
+          symbol: CONTRACT_ID,
+          algo_name: s.type,
+          side: s.side,
+          entry_price: price,
+          target1: s.target1,
+          target2: s.target2,
+          target: s.target,
+          stop: s.stop,
+          reasons: s.reasons
+        });
+        lastSignalTimePerAlgo[s.type] = now;
+        console.log(`\n🚀 ${s.type} ${s.side} Signal Fired @ ${price}`);
+
+        if (s.score >= 75) {
+          savePaperOrder({
+            symbol: CONTRACT_ID,
+            side: s.side,
+            price,
+            quantity: 1,
+            signal_id: dbResult.lastInsertRowid,
+            stop_loss: s.stop,
+            take_profit: s.target
+          });
+          console.log(`\n💼 AUTO-TRADE: Opened ${s.side} position for ${s.type} (Score: ${s.score})`);
+        }
+      });
+    }
+
+    const algoStats = getAlgoStats(CONTRACT_ID);
+    const algoDetailed = getAlgoStatsDetailed(CONTRACT_ID);
+
+    if (now - lastStatSave > 300000) {
+      saveSessionStats({
+        symbol: CONTRACT_ID,
+        date: new Date().toISOString().split('T')[0],
+        vah: indicators.va.vah,
+        val: indicators.va.val,
+        poc: indicators.va.poc,
+        asia_high: indicators.asia.high,
+        asia_low: indicators.asia.low,
+        ib_high: indicators.ib.high,
+        ib_low: indicators.ib.low,
+        orb1_high: indicators.orb1.high,
+        orb1_low: indicators.orb1.low,
+        orb5_high: indicators.orb5.high,
+        orb5_low: indicators.orb5.low,
+        orb15_high: indicators.orb15.high,
+        orb15_low: indicators.orb15.low
+      });
+      lastStatSave = now;
+    }
+
+    io.emit('tick', {
+      type: 'trade',
+      price,
+      size,
+      ts,
+      bars,
+      tickBars,
+      indicators: { ...indicators, ...result.indicators },
+      signals: result.signals,
+      confluence: result.confluence,
+      structure: result.structure,
+      priorDay: priorDayLevels,
+      leaderboard: algoStats,
+      leaderboardDetailed: algoDetailed,
+      dailyPnL,
+      internals: globalInternals,
+      news: highImpactNews,
+      positions: getOpenPaperOrders(CONTRACT_ID),
+      providerStatus: runtimeStatus
     });
-  })();
+  });
+}
+
+main().catch(err => {
+  console.error('[FATAL]', err);
+  process.exitCode = 1;
+});

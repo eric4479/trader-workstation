@@ -2,7 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { db, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
+const { execFileSync } = require('child_process');
+const { db, DB_PATH, savePaperOrder, getPaperOrders, getAlgoStatsDetailed, getAllSignals, getDailyPnL } = require('./database');
+const { runBacktest } = require('./backtestEngine');
 const { CONTRACT_ID } = require('./config');
 
 function getBars(timeframe, limit = 1000) {
@@ -58,7 +60,23 @@ function getSessionLevels() {
   };
 }
 
-function startDashboard(onReady) {
+function getDatabaseHealth() {
+  const candleRows = db.prepare(`
+    SELECT timeframe, COUNT(*) as count, MAX(timestamp) as latest
+    FROM candles
+    GROUP BY timeframe
+    ORDER BY timeframe
+  `).all();
+  const signalCount = db.prepare(`SELECT COUNT(*) as count FROM strategy_signals`).get().count;
+  const openOrderCount = db.prepare(`SELECT COUNT(*) as count FROM paper_orders WHERE status = 'OPEN'`).get().count;
+  return { path: DB_PATH, candles: candleRows, signals: signalCount, openOrders: openOrderCount };
+}
+
+function startDashboard(statusOrReady, maybeOnReady) {
+  const runtimeStatus = typeof statusOrReady === 'function' || !statusOrReady
+    ? { mode: 'dashboard', topstepx: { enabled: false, connected: false }, schwab: { enabled: false, connected: false } }
+    : statusOrReady;
+  const onReady = typeof statusOrReady === 'function' ? statusOrReady : maybeOnReady;
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server);
@@ -87,13 +105,31 @@ function startDashboard(onReady) {
   });
 
   app.get('/api/scanner', (req, res) => {
-    const { execSync } = require('child_process');
     try {
-      const output = execSync('./venv/bin/python3 scanner.py').toString();
+      const pythonBin = process.env.PYTHON_BIN || (process.platform === 'win32'
+        ? path.join(__dirname, 'venv', 'Scripts', 'python.exe')
+        : path.join(__dirname, 'venv', 'bin', 'python3'));
+      const output = execFileSync(pythonBin, [path.join(__dirname, 'scanner.py')], {
+        cwd: __dirname,
+        timeout: 30000,
+        encoding: 'utf8',
+        env: { ...process.env }
+      });
       res.json({ success: true, output });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      const stderr = err.stderr ? err.stderr.toString() : '';
+      res.status(500).json({ success: false, error: err.message, stderr });
     }
+  });
+
+
+  app.get('/api/health', (req, res) => {
+    res.json({
+      ok: true,
+      now: new Date().toISOString(),
+      providers: runtimeStatus,
+      database: getDatabaseHealth()
+    });
   });
 
   app.get('/api/candles', (req, res) => {
@@ -103,17 +139,43 @@ function startDashboard(onReady) {
   });
 
   app.post('/api/paper/order', (req, res) => {
-    const { side, price, quantity } = req.body;
+    const side = String(req.body.side || '').toUpperCase();
+    const price = Number(req.body.price);
+    const quantity = Number.parseInt(req.body.quantity, 10);
+    const stopLoss = req.body.stop_loss === undefined ? null : Number(req.body.stop_loss);
+    const takeProfit = req.body.take_profit === undefined ? null : Number(req.body.take_profit);
+
+    if (!['BUY', 'SELL'].includes(side)) {
+      return res.status(400).json({ success: false, error: 'side must be BUY or SELL' });
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ success: false, error: 'price must be a positive number' });
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({ success: false, error: 'quantity must be a positive integer' });
+    }
+    if (!Number.isFinite(stopLoss) || !Number.isFinite(takeProfit)) {
+      return res.status(400).json({ success: false, error: 'stop_loss and take_profit are required numeric bracket levels' });
+    }
+    if (side === 'BUY' && !(stopLoss < price && takeProfit > price)) {
+      return res.status(400).json({ success: false, error: 'BUY orders require stop_loss below price and take_profit above price' });
+    }
+    if (side === 'SELL' && !(stopLoss > price && takeProfit < price)) {
+      return res.status(400).json({ success: false, error: 'SELL orders require stop_loss above price and take_profit below price' });
+    }
+
     const order = {
       symbol: CONTRACT_ID,
       side,
       price,
       quantity,
-      status: 'FILLED', // Simplified paper trade: instant fill
-      timestamp: new Date().toISOString()
+      signal_id: req.body.signal_id || null,
+      stop_loss: stopLoss,
+      take_profit: takeProfit
     };
-    savePaperOrder(order);
-    res.json({ success: true, order });
+    const result = savePaperOrder(order);
+    const savedOrder = { id: result.lastInsertRowid, status: 'OPEN', ...order };
+    res.json({ success: true, order: savedOrder });
     io.emit('order_update', getPaperOrders());
   });
 
@@ -126,6 +188,24 @@ function startDashboard(onReady) {
     res.json(getAllSignals(CONTRACT_ID, limit));
   });
 
+
+  app.get('/api/backtest', (req, res) => {
+    try {
+      const report = runBacktest({
+        symbols: req.query.symbols || req.query.symbol,
+        orMinutes: req.query.or || req.query.orMinutes,
+        targetPoints: req.query.target,
+        stopPoints: req.query.stop,
+        quantity: req.query.quantity,
+        limit: req.query.limit,
+        sweep: req.query.sweep
+      });
+      res.json({ success: true, ...report });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/analytics', (req, res) => {
     res.json({
       leaderboard: getAlgoStatsDetailed(CONTRACT_ID),
@@ -134,6 +214,7 @@ function startDashboard(onReady) {
   });
 
   io.on('connection', (socket) => {
+    socket.emit('provider_status', runtimeStatus);
     socket.emit('levels', getSessionLevels());
     socket.emit('order_update', getPaperOrders());
     socket.emit('analytics', {
@@ -159,4 +240,4 @@ function startDashboard(onReady) {
   return io;
 }
 
-module.exports = { startDashboard };
+module.exports = { startDashboard, getDatabaseHealth };
